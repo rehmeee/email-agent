@@ -16,12 +16,10 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # Dummy values so `next build` can run in CI without real secrets.
-      # Real secrets live in Vercel → Project → Settings → Environment Variables.
-      AUTH_SECRET: ci-build-secret-must-be-at-least-32-characters-long
-      AUTH_URL: http://localhost:3000
-      GOOGLE_CLIENT_ID: ci-dummy-google-client-id
-      GOOGLE_CLIENT_SECRET: ci-dummy-google-client-secret
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ci-dummy-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ci-dummy-service-key
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
       OPENROUTER_API_KEY: ci-dummy-openrouter-key
       OPENROUTER_MODEL: openai/gpt-4o-mini
 

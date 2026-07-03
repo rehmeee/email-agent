@@ -1,36 +1,46 @@
 # MailMind — AI Email Agent
 
-Next.js app with Google sign-in, animated landing page, and dashboard. LangGraph agent coming next.
+Next.js app with **Supabase Auth** (email + Google), dashboard, and CI/CD.
 
-## Run locally
+## Auth flow
+
+1. **Sign up / sign in** — email + password or Google at `/login`
+2. **Connect Gmail** — separate step on dashboard (Gmail API scopes)
+3. **Agent** — coming next (LangGraph + OpenRouter)
+
+## Setup
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+### Environment variables
 
-## Environment variables
+Copy `.env.example` to `.env` and fill in Supabase + OpenRouter keys.
 
-Copy `.env.example` to `.env` and fill in:
+### Supabase dashboard
 
-| Variable | Purpose |
-|----------|---------|
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
-| `AUTH_SECRET` | Session signing (`openssl rand -base64 32`) |
-| `AUTH_URL` | `http://localhost:3000` |
-| `OPENROUTER_API_KEY` | For LangGraph agent (later) |
+1. **Authentication → Providers** — enable Email + Google
+2. **Authentication → URL Configuration** — add redirect URLs:
+   - `http://localhost:3000/**`
+   - `https://your-vercel-domain.vercel.app/**`
+3. **Authentication → Providers → Google** — add Google Client ID/Secret
+4. **Authentication → General** — enable **Manual linking** (for Connect Gmail)
 
-## Google Cloud setup
+### Google Cloud
 
-1. OAuth redirect URI: `http://localhost:3000/api/auth/callback/google`
-2. Add your email as a **test user** on the consent screen
+Redirect URI for Supabase:
+
+```
+https://<project-ref>.supabase.co/auth/v1/callback
+```
 
 ## Routes
 
 | Route | Description |
 |-------|-------------|
-| `/` | Landing page + Google sign-in |
-| `/dashboard` | Protected dashboard (requires login) |
+| `/` | Landing page |
+| `/login` | Email + Google sign-in |
+| `/dashboard` | Protected workspace |
+| `/auth/callback` | Supabase OAuth callback |
