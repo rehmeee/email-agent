@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import Image from "next/image";
+import Link from "next/link";
 
 type DashboardClientProps = {
   user: {
@@ -9,7 +10,16 @@ type DashboardClientProps = {
     email: string;
     image: string | null;
   };
+  gmail: {
+    connected: boolean;
+    email: string | null;
+    connectedAt: string | null;
+    setupRequired?: boolean;
+  };
+  authError?: string;
+  gmailSuccess?: boolean;
   signOutAction: () => Promise<void>;
+  connectGmailAction: () => Promise<void>;
 };
 
 const sidebarNav = [
@@ -19,21 +29,42 @@ const sidebarNav = [
   { label: "Drafts", active: false, icon: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
 ];
 
-const setupSteps = [
-  { label: "Sign in with Google", done: true },
-  { label: "Connect Gmail inbox", done: false },
-  { label: "Launch AI agent", done: false },
-];
+function buildSetupSteps(gmailConnected: boolean) {
+  return [
+    { label: "Create your MailMind account", done: true },
+    { label: "Connect Gmail inbox", done: gmailConnected },
+    { label: "Launch AI agent", done: false },
+  ];
+}
 
-const metrics = [
-  { label: "Unread today", value: "—", sub: "Connect Gmail" },
-  { label: "Agent status", value: "Idle", sub: "Ready to configure" },
-  { label: "Drafts", value: "0", sub: "None pending" },
-  { label: "Model", value: "GPT-4o mini", sub: "via OpenRouter" },
-];
+function buildMetrics(gmailConnected: boolean) {
+  return [
+    {
+      label: "Unread today",
+      value: "—",
+      sub: gmailConnected ? "Sync coming soon" : "Connect Gmail",
+    },
+    {
+      label: "Agent status",
+      value: gmailConnected ? "Ready" : "Idle",
+      sub: gmailConnected ? "Gmail linked" : "Ready to configure",
+    },
+    { label: "Drafts", value: "0", sub: "None pending" },
+    { label: "Model", value: "GPT-4o mini", sub: "via OpenRouter" },
+  ];
+}
 
-export function DashboardClient({ user, signOutAction }: DashboardClientProps) {
+export function DashboardClient({
+  user,
+  gmail,
+  authError,
+  gmailSuccess,
+  signOutAction,
+  connectGmailAction,
+}: DashboardClientProps) {
   const firstName = user.name.split(" ")[0];
+  const setupSteps = buildSetupSteps(gmail.connected);
+  const metrics = buildMetrics(gmail.connected);
 
   return (
     <div className="flex min-h-screen bg-[#030304] text-white">
@@ -117,17 +148,59 @@ export function DashboardClient({ user, signOutAction }: DashboardClientProps) {
           </div>
           <div className="flex items-center gap-3">
             <div className="hidden items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 sm:flex">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-              <span className="text-xs text-zinc-400">Gmail not connected</span>
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  gmail.connected ? "bg-emerald-400" : "bg-amber-400"
+                }`}
+              />
+              <span className="text-xs text-zinc-400">
+                {gmail.connected
+                  ? `Gmail connected${gmail.email ? ` · ${gmail.email}` : ""}`
+                  : "Gmail not connected"}
+              </span>
             </div>
-            <button
-              type="button"
-              className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-zinc-900 transition hover:bg-zinc-100"
-            >
-              Connect Gmail
-            </button>
+            {gmail.connected ? (
+              <Link
+                href="/api/gmail/test"
+                target="_blank"
+                className="rounded-full border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-xs font-semibold text-white transition hover:bg-white/[0.08]"
+              >
+                Test Gmail API
+              </Link>
+            ) : (
+              <form action={connectGmailAction}>
+                <button
+                  type="submit"
+                  className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-zinc-900 transition hover:bg-zinc-100"
+                >
+                  Connect Gmail
+                </button>
+              </form>
+            )}
           </div>
         </header>
+
+        {gmail.setupRequired ? (
+          <div className="mx-6 mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            Database setup required. Open Supabase → SQL Editor and run{" "}
+            <code className="rounded bg-black/30 px-1.5 py-0.5 text-xs">
+              supabase/migrations/001_gmail_connections.sql
+            </code>
+            , then refresh this page.
+          </div>
+        ) : null}
+
+        {authError ? (
+          <div className="mx-6 mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+            {authError}
+          </div>
+        ) : null}
+
+        {gmailSuccess ? (
+          <div className="mx-6 mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+            Gmail connected successfully. Your inbox is ready for the agent.
+          </div>
+        ) : null}
 
         <main className="flex-1 overflow-auto p-6">
           {/* Metrics */}
@@ -226,8 +299,9 @@ export function DashboardClient({ user, signOutAction }: DashboardClientProps) {
                 </div>
                 <h3 className="text-lg font-semibold">Agent chat launches here</h3>
                 <p className="mt-2 max-w-sm text-sm text-zinc-500">
-                  Connect Gmail first, then ask questions like &ldquo;show today&apos;s
-                  emails&rdquo; or &ldquo;draft a follow-up.&rdquo;
+                  {gmail.connected
+                    ? "Gmail is connected. The LangGraph agent will launch here next."
+                    : "Connect Gmail first, then ask questions like “show today’s emails” or “draft a follow-up.”"}
                 </p>
               </div>
 
@@ -237,7 +311,9 @@ export function DashboardClient({ user, signOutAction }: DashboardClientProps) {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                   </svg>
                   <span className="text-sm text-zinc-600">
-                    Connect Gmail to unlock the agent
+                    {gmail.connected
+                      ? "Agent chat unlocks in the next phase"
+                      : "Connect Gmail to unlock the agent"}
                   </span>
                 </div>
               </div>
