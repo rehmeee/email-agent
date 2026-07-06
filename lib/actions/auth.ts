@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { deleteGmailConnection } from "@/lib/gmail/connection";
 import { getAppUrl } from "@/lib/supabase/env";
 
 export type AuthActionState = {
@@ -106,11 +107,12 @@ export async function connectGmail() {
     redirect("/login");
   }
 
+  await deleteGmailConnection(user.id);
+
   const gmailScopes =
-    "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose";
+    "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/userinfo.email";
   const callbackUrl = `${appUrl}/auth/callback?next=/dashboard&gmail=linked`;
 
-  // signInWithOAuth works without manual identity linking enabled.
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
@@ -119,6 +121,7 @@ export async function connectGmail() {
       queryParams: {
         access_type: "offline",
         prompt: "consent",
+        include_granted_scopes: "true",
       },
     },
   });

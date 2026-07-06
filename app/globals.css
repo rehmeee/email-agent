@@ -116,3 +116,142 @@ body {
   background-size: 200% 100%;
   animation: shimmer 4s linear infinite;
 }
+
+.chat-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.chat-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.chat-typing-dot {
+  display: inline-block;
+  height: 0.5rem;
+  width: 0.5rem;
+  border-radius: 999px;
+  background: rgba(161, 161, 170, 0.9);
+  animation: chat-typing 1.2s ease-in-out infinite;
+}
+
+.animation-delay-150 {
+  animation-delay: 0.15s;
+}
+
+.animation-delay-300 {
+  animation-delay: 0.3s;
+}
+
+@keyframes chat-typing {
+  0%, 80%, 100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.mailmind-robot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mailmind-robot--idle {
+  animation: robot-float 3s ease-in-out infinite;
+}
+
+.mailmind-robot--thinking {
+  animation: robot-think-bob 0.9s ease-in-out infinite;
+}
+
+.mailmind-robot--thinking .robot-glow {
+  animation: robot-glow-pulse 1.2s ease-in-out infinite;
+}
+
+.mailmind-robot--thinking .robot-antenna-tip {
+  animation: robot-antenna-blink 0.8s ease-in-out infinite;
+}
+
+.mailmind-robot--thinking .robot-pupil-left,
+.mailmind-robot--thinking .robot-pupil-right {
+  animation: robot-look 1.4s ease-in-out infinite;
+}
+
+.mailmind-robot--speaking {
+  animation: robot-speak 0.45s ease-in-out 2;
+}
+
+.mailmind-robot--speaking .robot-mouth {
+  animation: robot-talk 0.35s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.mailmind-robot--locked {
+  opacity: 0.45;
+  filter: grayscale(0.4);
+}
+
+.mailmind-robot--idle .robot-eye {
+  animation: robot-blink 4.5s ease-in-out infinite;
+}
+
+@keyframes robot-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@keyframes robot-think-bob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-2px) rotate(-2deg); }
+  75% { transform: translateY(-2px) rotate(2deg); }
+}
+
+@keyframes robot-glow-pulse {
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(1.06); }
+}
+
+@keyframes robot-antenna-blink {
+  0%, 100% { fill: #22d3ee; filter: drop-shadow(0 0 0 transparent); }
+  50% { fill: #67e8f9; filter: drop-shadow(0 0 6px #22d3ee); }
+}
+
+@keyframes robot-look {
+  0%, 100% { transform: translateX(0); }
+  30% { transform: translateX(-1.5px); }
+  60% { transform: translateX(1.5px); }
+}
+
+@keyframes robot-blink {
+  0%, 46%, 48%, 100% { transform: scaleY(1); }
+  47% { transform: scaleY(0.12); }
+}
+
+@keyframes robot-speak {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+@keyframes robot-talk {
+  0%, 100% { transform: scaleY(1); opacity: 1; }
+  50% { transform: scaleY(1.4); opacity: 0.85; }
+}

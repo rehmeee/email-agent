@@ -5,6 +5,31 @@ const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.compose",
 ];
 
+export const REQUIRED_GMAIL_SCOPE_PREFIX = "gmail.readonly";
+
+function tokenHasGmailReadScope(scopes: string[]) {
+  return scopes.some(
+    (scope) =>
+      scope.includes("gmail.readonly") ||
+      scope.includes("gmail.modify") ||
+      scope.includes("mail.google.com")
+  );
+}
+
+export async function fetchGoogleTokenScopes(accessToken: string) {
+  const response = await fetch(
+    `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
+  );
+
+  const payload = (await response.json()) as { scope?: string; error?: string };
+
+  if (!response.ok) {
+    return [];
+  }
+
+  return payload.scope?.split(" ").filter(Boolean) ?? [];
+}
+
 function isMissingGmailTableError(message: string) {
   return (
     message.includes("gmail_connections") &&
@@ -20,6 +45,8 @@ export type GmailConnectionStatus = {
   connectedAt: string | null;
   scopes: string[];
   setupRequired?: boolean;
+  needsReconnect?: boolean;
+  agentReady?: boolean;
 };
 
 export type GmailTokens = {
@@ -113,15 +140,48 @@ export async function getGmailConnectionStatus(
       googleEmail: null,
       connectedAt: null,
       scopes: [],
+      agentReady: false,
     };
   }
 
-  return {
-    connected: true,
-    googleEmail: data.google_email,
-    connectedAt: data.connected_at,
-    scopes: data.scopes ?? [],
-  };
+  try {
+    const { accessToken } = await getValidGmailAccessToken(userId, {
+      skipScopeCheck: true,
+    });
+    const liveScopes = await fetchGoogleTokenScopes(accessToken);
+    const hasGmailScope = tokenHasGmailReadScope(liveScopes);
+
+    return {
+      connected: hasGmailScope,
+      googleEmail: data.google_email,
+      connectedAt: data.connected_at,
+      scopes: liveScopes.length > 0 ? liveScopes : data.scopes ?? [],
+      needsReconnect: !hasGmailScope,
+      agentReady: hasGmailScope,
+    };
+  } catch {
+    return {
+      connected: false,
+      googleEmail: data.google_email,
+      connectedAt: data.connected_at,
+      scopes: data.scopes ?? [],
+      needsReconnect: true,
+      agentReady: false,
+    };
+  }
+}
+
+export async function deleteGmailConnection(userId: string) {
+  const admin = createAdminClient();
+
+  const { error } = await admin
+    .from("gmail_connections")
+    .delete()
+    .eq("user_id", userId);
+
+  if (error && !isMissingGmailTableError(error.message)) {
+    throw new Error(`Failed to remove Gmail connection: ${error.message}`);
+  }
 }
 
 async function refreshAccessToken(refreshToken: string) {
@@ -163,7 +223,8 @@ async function refreshAccessToken(refreshToken: string) {
 }
 
 export async function getValidGmailAccessToken(
-  userId: string
+  userId: string,
+  options?: { skipScopeCheck?: boolean }
 ): Promise<GmailTokens> {
   const admin = createAdminClient();
 
@@ -184,6 +245,10 @@ export async function getValidGmailAccessToken(
     !expiresAt || expiresAt.getTime() <= Date.now() + 60_000;
 
   if (!isExpired) {
+    if (!options?.skipScopeCheck) {
+      await assertGmailScopes(data.access_token);
+    }
+
     return {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
@@ -206,12 +271,26 @@ export async function getValidGmailAccessToken(
     scopes: data.scopes,
   });
 
+  if (!options?.skipScopeCheck) {
+    await assertGmailScopes(refreshed.accessToken);
+  }
+
   return {
     accessToken: refreshed.accessToken,
     refreshToken: data.refresh_token,
     expiresAt: new Date(Date.now() + refreshed.expiresIn * 1000),
     googleEmail: data.google_email,
   };
+}
+
+async function assertGmailScopes(accessToken: string) {
+  const scopes = await fetchGoogleTokenScopes(accessToken);
+
+  if (!tokenHasGmailReadScope(scopes)) {
+    throw new Error(
+      "Gmail is connected without inbox permissions. Click Reconnect Gmail on the dashboard to grant access."
+    );
+  }
 }
 
 export async function fetchGmailProfile(accessToken: string) {
