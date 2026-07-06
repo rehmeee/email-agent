@@ -41,7 +41,7 @@ export async function GET(request: Request) {
   const providerToken = session.provider_token;
   const providerRefreshToken = session.provider_refresh_token;
 
-  if (providerToken) {
+  if (gmailLink && providerToken) {
     try {
       await saveGmailTokens(user.id, {
         accessToken: providerToken,
@@ -68,7 +68,7 @@ export async function GET(request: Request) {
 
   const separator = next.includes("?") ? "&" : "?";
   const successParam =
-    providerToken || gmailLink ? `${separator}gmail=connected` : "";
+    gmailLink && providerToken ? `${separator}gmail=connected` : "";
 
   return NextResponse.redirect(`${origin}${next}${successParam}`);
 }

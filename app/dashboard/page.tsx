@@ -36,6 +36,8 @@ export default async function DashboardPage({
         email: gmailStatus.googleEmail,
         connectedAt: gmailStatus.connectedAt,
         setupRequired: gmailStatus.setupRequired,
+        needsReconnect: gmailStatus.needsReconnect,
+        agentReady: gmailStatus.agentReady,
       }}
       authError={params.error}
       gmailSuccess={params.gmail === "connected"}

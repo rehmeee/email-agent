@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
+import { AgentChat } from "@/components/dashboard/agent-chat";
 
 type DashboardClientProps = {
   user: {
@@ -15,6 +16,8 @@ type DashboardClientProps = {
     email: string | null;
     connectedAt: string | null;
     setupRequired?: boolean;
+    needsReconnect?: boolean;
+    agentReady?: boolean;
   };
   authError?: string;
   gmailSuccess?: boolean;
@@ -29,25 +32,25 @@ const sidebarNav = [
   { label: "Drafts", active: false, icon: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
 ];
 
-function buildSetupSteps(gmailConnected: boolean) {
+function buildSetupSteps(gmailConnected: boolean, agentReady: boolean) {
   return [
     { label: "Create your MailMind account", done: true },
     { label: "Connect Gmail inbox", done: gmailConnected },
-    { label: "Launch AI agent", done: false },
+    { label: "Launch AI agent", done: agentReady },
   ];
 }
 
-function buildMetrics(gmailConnected: boolean) {
+function buildMetrics(gmailConnected: boolean, agentReady: boolean) {
   return [
     {
       label: "Unread today",
       value: "—",
-      sub: gmailConnected ? "Sync coming soon" : "Connect Gmail",
+      sub: agentReady ? "Sync coming soon" : "Connect Gmail",
     },
     {
       label: "Agent status",
-      value: gmailConnected ? "Ready" : "Idle",
-      sub: gmailConnected ? "Gmail linked" : "Ready to configure",
+      value: agentReady ? "Online" : "Idle",
+      sub: agentReady ? "LangGraph ready" : "Needs Gmail scopes",
     },
     { label: "Drafts", value: "0", sub: "None pending" },
     { label: "Model", value: "GPT-4o mini", sub: "via OpenRouter" },
@@ -63,11 +66,12 @@ export function DashboardClient({
   connectGmailAction,
 }: DashboardClientProps) {
   const firstName = user.name.split(" ")[0];
-  const setupSteps = buildSetupSteps(gmail.connected);
-  const metrics = buildMetrics(gmail.connected);
+  const agentReady = gmail.agentReady ?? false;
+  const setupSteps = buildSetupSteps(gmail.connected, agentReady);
+  const metrics = buildMetrics(gmail.connected, agentReady);
 
   return (
-    <div className="flex min-h-screen bg-[#030304] text-white">
+    <div className="flex h-screen overflow-hidden bg-[#030304] text-white">
       {/* Sidebar */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-white/[0.06] bg-[#050506] lg:flex">
         <div className="border-b border-white/[0.06] px-5 py-5">
@@ -136,7 +140,7 @@ export function DashboardClient({
       </aside>
 
       {/* Main */}
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {/* Top bar */}
         <header className="flex items-center justify-between border-b border-white/[0.06] bg-[#030304]/80 px-6 py-4 backdrop-blur-xl">
           <div>
@@ -150,16 +154,26 @@ export function DashboardClient({
             <div className="hidden items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 sm:flex">
               <span
                 className={`h-1.5 w-1.5 rounded-full ${
-                  gmail.connected ? "bg-emerald-400" : "bg-amber-400"
+                  agentReady
+                    ? "bg-emerald-400"
+                    : gmail.needsReconnect
+                      ? "bg-amber-400"
+                      : gmail.connected
+                        ? "bg-amber-400"
+                        : "bg-amber-400"
                 }`}
               />
               <span className="text-xs text-zinc-400">
-                {gmail.connected
+                {agentReady
                   ? `Gmail connected${gmail.email ? ` · ${gmail.email}` : ""}`
-                  : "Gmail not connected"}
+                  : gmail.needsReconnect
+                    ? "Gmail needs reconnect"
+                    : gmail.connected
+                      ? "Gmail connected (limited scopes)"
+                      : "Gmail not connected"}
               </span>
             </div>
-            {gmail.connected ? (
+            {agentReady ? (
               <Link
                 href="/api/gmail/test"
                 target="_blank"
@@ -173,12 +187,22 @@ export function DashboardClient({
                   type="submit"
                   className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-zinc-900 transition hover:bg-zinc-100"
                 >
-                  Connect Gmail
+                  {gmail.needsReconnect || gmail.connected
+                    ? "Reconnect Gmail"
+                    : "Connect Gmail"}
                 </button>
               </form>
             )}
           </div>
         </header>
+
+        {gmail.needsReconnect ? (
+          <div className="mx-6 mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            Gmail is linked without inbox permissions (this often happens after Google
+            sign-in). Click <strong>Reconnect Gmail</strong> and approve Gmail access on
+            the Google consent screen.
+          </div>
+        ) : null}
 
         {gmail.setupRequired ? (
           <div className="mx-6 mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
@@ -202,12 +226,12 @@ export function DashboardClient({
           </div>
         ) : null}
 
-        <main className="flex-1 overflow-auto p-6">
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
           {/* Metrics */}
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
+            className="grid shrink-0 gap-4 sm:grid-cols-2 xl:grid-cols-4"
           >
             {metrics.map((m, i) => (
               <motion.div
@@ -224,13 +248,13 @@ export function DashboardClient({
             ))}
           </motion.div>
 
-          <div className="mt-6 grid gap-6 lg:grid-cols-5">
+          <div className="mt-6 flex min-h-0 flex-1 flex-col gap-6 xl:flex-row">
             {/* Setup checklist */}
             <motion.div
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.15 }}
-              className="glass-panel rounded-2xl p-6 lg:col-span-2"
+              className="glass-panel shrink-0 rounded-2xl p-6 xl:w-80"
             >
               <p className="text-xs font-semibold uppercase tracking-widest text-indigo-400">
                 Setup
@@ -268,56 +292,9 @@ export function DashboardClient({
               </ul>
             </motion.div>
 
-            {/* Agent chat placeholder */}
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.25 }}
-              className="glass-panel flex flex-col rounded-2xl lg:col-span-3"
-            >
-              <div className="border-b border-white/[0.06] px-6 py-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="font-semibold">AI Agent</h2>
-                    <p className="text-xs text-zinc-500">LangGraph · OpenRouter</p>
-                  </div>
-                  <div className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-black/20 px-2.5 py-1">
-                    <span className="h-1.5 w-1.5 rounded-full bg-zinc-600" />
-                    <span className="font-mono text-[10px] text-zinc-500">offline</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
-                <div className="relative mb-6">
-                  <div className="absolute inset-0 rounded-2xl bg-indigo-500/10 blur-2xl" />
-                  <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-indigo-500/20 bg-indigo-500/[0.08]">
-                    <svg className="h-8 w-8 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                    </svg>
-                  </div>
-                </div>
-                <h3 className="text-lg font-semibold">Agent chat launches here</h3>
-                <p className="mt-2 max-w-sm text-sm text-zinc-500">
-                  {gmail.connected
-                    ? "Gmail is connected. The LangGraph agent will launch here next."
-                    : "Connect Gmail first, then ask questions like “show today’s emails” or “draft a follow-up.”"}
-                </p>
-              </div>
-
-              <div className="border-t border-white/[0.06] p-4">
-                <div className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-black/30 px-4 py-3 opacity-50">
-                  <svg className="h-4 w-4 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                  </svg>
-                  <span className="text-sm text-zinc-600">
-                    {gmail.connected
-                      ? "Agent chat unlocks in the next phase"
-                      : "Connect Gmail to unlock the agent"}
-                  </span>
-                </div>
-              </div>
-            </motion.div>
+            <div className="min-h-0 flex-1">
+              <AgentChat enabled={agentReady} />
+            </div>
           </div>
         </main>
       </div>
