@@ -198,8 +198,8 @@ export function DashboardClient({
 
         {gmail.needsReconnect ? (
           <div className="mx-6 mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-            Gmail is linked without inbox permissions (this often happens after Google
-            sign-in). Click <strong>Reconnect Gmail</strong> and approve Gmail access on
+            Gmail is linked without full inbox/draft permissions (this often happens after Google
+            sign-in). Click <strong>Reconnect Gmail</strong> and approve read + compose access on
             the Google consent screen.
           </div>
         ) : null}
@@ -249,7 +249,6 @@ export function DashboardClient({
           </motion.div>
 
           <div className="mt-6 flex min-h-0 flex-1 flex-col gap-6 xl:flex-row">
-            {/* Setup checklist */}
             <motion.div
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}

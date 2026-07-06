@@ -1,3 +1,5 @@
+import { headers } from "next/headers";
+
 export function getSupabaseUrl() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!url) {
@@ -24,4 +26,20 @@ export function getAppUrl() {
     process.env.AUTH_URL ??
     "http://localhost:3000"
   );
+}
+
+/** Prefer the live request host so OAuth redirects stay on Vercel (not localhost). */
+export async function getRequestAppUrl() {
+  const headerStore = await headers();
+  const host =
+    headerStore.get("x-forwarded-host") ?? headerStore.get("host");
+
+  if (host) {
+    const protocol =
+      headerStore.get("x-forwarded-proto") ??
+      (host.startsWith("localhost") ? "http" : "https");
+    return `${protocol}://${host}`;
+  }
+
+  return getAppUrl();
 }

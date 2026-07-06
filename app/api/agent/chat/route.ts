@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     const rawMessage =
       error instanceof Error ? error.message : "Agent request failed";
     const errorMessage = rawMessage.includes("insufficient authentication scopes")
-      ? "Gmail is missing inbox permissions. Click Reconnect Gmail on the dashboard, approve Gmail access, then try again."
+      ? "Gmail is missing inbox or draft permissions. Click Reconnect Gmail on the dashboard, approve Gmail access, then try again."
       : rawMessage;
 
     return NextResponse.json({ error: errorMessage }, { status: 400 });

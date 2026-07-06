@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { deleteGmailConnection } from "@/lib/gmail/connection";
-import { getAppUrl } from "@/lib/supabase/env";
+import { getRequestAppUrl } from "@/lib/supabase/env";
 
 export type AuthActionState = {
   error?: string;
@@ -12,7 +12,7 @@ export type AuthActionState = {
 
 export async function signInWithGoogle() {
   const supabase = await createClient();
-  const appUrl = getAppUrl();
+  const appUrl = await getRequestAppUrl();
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
@@ -69,7 +69,7 @@ export async function signUpWithEmail(
   }
 
   const supabase = await createClient();
-  const appUrl = getAppUrl();
+  const appUrl = await getRequestAppUrl();
 
   const { error } = await supabase.auth.signUp({
     email,
@@ -97,7 +97,7 @@ export async function signOut() {
 
 export async function connectGmail() {
   const supabase = await createClient();
-  const appUrl = getAppUrl();
+  const appUrl = await getRequestAppUrl();
 
   const {
     data: { user },
