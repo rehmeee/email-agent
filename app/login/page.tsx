@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { AnimatedBackground } from "@/components/landing/animated-background";
 import { LoginForm } from "@/components/auth/login-form";
 

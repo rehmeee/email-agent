@@ -103,10 +103,7 @@ export function AgentChat({ enabled }: AgentChatProps) {
   }, [messages, isLoading, error, thinkingMessage]);
 
   useEffect(() => {
-    if (!isLoading) {
-      setThinkingStep(0);
-      return;
-    }
+    if (!isLoading) return;
 
     const interval = window.setInterval(() => {
       setThinkingStep((current) => current + 1);
@@ -144,6 +141,7 @@ export function AgentChat({ enabled }: AgentChatProps) {
     setMessages(nextMessages);
     setInput("");
     setError(null);
+    setThinkingStep(0);
     setIsLoading(true);
 
     if (textareaRef.current) {
