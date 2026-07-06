@@ -64,10 +64,17 @@ function extractPlainText(payload?: GmailMessageResponse["payload"]): string {
   return "";
 }
 
-async function gmailFetch<T>(accessToken: string, path: string): Promise<T> {
+async function gmailFetch<T>(
+  accessToken: string,
+  path: string,
+  init?: RequestInit
+): Promise<T> {
   const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me${path}`, {
+    ...init,
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...init?.headers,
     },
   });
 
@@ -78,6 +85,24 @@ async function gmailFetch<T>(accessToken: string, path: string): Promise<T> {
   }
 
   return payload;
+}
+
+function encodeMimeMessage(message: string) {
+  return Buffer.from(message)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+export function parseEmailAddress(value: string) {
+  const bracketMatch = value.match(/<([^>]+)>/);
+  if (bracketMatch?.[1]) {
+    return bracketMatch[1].trim();
+  }
+
+  const emailMatch = value.match(/[^\s<>]+@[^\s<>]+/);
+  return emailMatch?.[0]?.trim() ?? value.trim();
 }
 
 export type GmailMessageSummary = {
@@ -167,9 +192,67 @@ export async function getGmailMessage(
   }
 
   const body = extractPlainText(message.payload).trim();
+  const headers = message.payload?.headers ?? [];
 
   return {
     ...summary,
     body: body || summary.snippet,
+    messageIdHeader: getHeader(headers, "Message-ID"),
+    to: getHeader(headers, "To"),
+    replyToEmail: parseEmailAddress(summary.from),
+  };
+}
+
+export type GmailDraftResult = {
+  draftId: string;
+  messageId: string;
+  threadId: string;
+};
+
+export async function createGmailDraft(
+  accessToken: string,
+  input: {
+    to: string;
+    subject: string;
+    body: string;
+    threadId?: string;
+    inReplyTo?: string;
+    references?: string;
+  }
+): Promise<GmailDraftResult> {
+  const mimeLines = [
+    `To: ${input.to}`,
+    `Subject: ${input.subject}`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=UTF-8",
+  ];
+
+  if (input.inReplyTo) {
+    mimeLines.push(`In-Reply-To: ${input.inReplyTo}`);
+    mimeLines.push(`References: ${input.references ?? input.inReplyTo}`);
+  }
+
+  mimeLines.push("", input.body);
+
+  const message: { raw: string; threadId?: string } = {
+    raw: encodeMimeMessage(mimeLines.join("\r\n")),
+  };
+
+  if (input.threadId) {
+    message.threadId = input.threadId;
+  }
+
+  const draft = await gmailFetch<{
+    id: string;
+    message: { id: string; threadId: string };
+  }>(accessToken, "/drafts", {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+
+  return {
+    draftId: draft.id,
+    messageId: draft.message.id,
+    threadId: draft.message.threadId,
   };
 }

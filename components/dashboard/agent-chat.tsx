@@ -22,7 +22,7 @@ type AgentChatProps = {
 const STARTER_PROMPTS = [
   "Show my 5 most recent emails",
   "What unread emails do I have?",
-  "Summarize emails from today",
+  "Draft a polite reply to my latest email",
 ];
 
 const THINKING_MESSAGES = [

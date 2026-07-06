@@ -16,6 +16,17 @@ function tokenHasGmailReadScope(scopes: string[]) {
   );
 }
 
+function tokenHasGmailComposeScope(scopes: string[]) {
+  return scopes.some(
+    (scope) =>
+      scope.includes("gmail.compose") || scope.includes("gmail.modify")
+  );
+}
+
+function tokenHasRequiredGmailScopes(scopes: string[]) {
+  return tokenHasGmailReadScope(scopes) && tokenHasGmailComposeScope(scopes);
+}
+
 export async function fetchGoogleTokenScopes(accessToken: string) {
   const response = await fetch(
     `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
@@ -149,15 +160,15 @@ export async function getGmailConnectionStatus(
       skipScopeCheck: true,
     });
     const liveScopes = await fetchGoogleTokenScopes(accessToken);
-    const hasGmailScope = tokenHasGmailReadScope(liveScopes);
+    const hasRequiredScopes = tokenHasRequiredGmailScopes(liveScopes);
 
     return {
-      connected: hasGmailScope,
+      connected: hasRequiredScopes,
       googleEmail: data.google_email,
       connectedAt: data.connected_at,
       scopes: liveScopes.length > 0 ? liveScopes : data.scopes ?? [],
-      needsReconnect: !hasGmailScope,
-      agentReady: hasGmailScope,
+      needsReconnect: !hasRequiredScopes,
+      agentReady: hasRequiredScopes,
     };
   } catch {
     return {
@@ -286,9 +297,17 @@ export async function getValidGmailAccessToken(
 async function assertGmailScopes(accessToken: string) {
   const scopes = await fetchGoogleTokenScopes(accessToken);
 
-  if (!tokenHasGmailReadScope(scopes)) {
+  if (!tokenHasRequiredGmailScopes(scopes)) {
+    const missing = [];
+    if (!tokenHasGmailReadScope(scopes)) {
+      missing.push("gmail.readonly");
+    }
+    if (!tokenHasGmailComposeScope(scopes)) {
+      missing.push("gmail.compose");
+    }
+
     throw new Error(
-      "Gmail is connected without inbox permissions. Click Reconnect Gmail on the dashboard to grant access."
+      `Gmail is missing required permissions (${missing.join(", ")}). Click Reconnect Gmail on the dashboard to grant inbox read and draft access.`
     );
   }
 }
