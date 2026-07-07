@@ -256,3 +256,57 @@ export async function createGmailDraft(
     threadId: draft.message.threadId,
   };
 }
+
+type GmailDraftListResponse = {
+  drafts?: { id: string; message: { id: string; threadId: string } }[];
+  resultSizeEstimate?: number;
+};
+
+type GmailDraftResponse = {
+  id: string;
+  message: GmailMessageResponse;
+};
+
+export type GmailDraftSummary = {
+  draftId: string;
+  messageId: string;
+  subject: string;
+  to: string;
+  snippet: string;
+  date: string;
+};
+
+export async function listGmailDrafts(
+  accessToken: string,
+  maxResults = 10
+): Promise<GmailDraftSummary[]> {
+  const list = await gmailFetch<GmailDraftListResponse>(
+    accessToken,
+    `/drafts?maxResults=${maxResults}`
+  );
+
+  if (!list.drafts?.length) {
+    return [];
+  }
+
+  const drafts = await Promise.all(
+    list.drafts.map(async (item) => {
+      const draft = await gmailFetch<GmailDraftResponse>(
+        accessToken,
+        `/drafts/${item.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=To&metadataHeaders=Date`
+      );
+      const headers = draft.message.payload?.headers ?? [];
+
+      return {
+        draftId: draft.id,
+        messageId: draft.message.id,
+        subject: getHeader(headers, "Subject") || "(no subject)",
+        to: getHeader(headers, "To") || "No recipient",
+        snippet: draft.message.snippet ?? "",
+        date: getHeader(headers, "Date") || "",
+      };
+    })
+  );
+
+  return drafts;
+}

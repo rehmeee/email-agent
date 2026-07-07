@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
 import { runMailMindAgent, type ChatHistoryItem } from "@/lib/agent/graph";
+import {
+  addChatMessage,
+  ensureChatThread,
+  getChatThreadMessages,
+} from "@/lib/chat/threads";
 import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 import { createClient } from "@/lib/supabase/server";
 
 type ChatRequestBody = {
   message?: string;
+  threadId?: string | null;
   history?: ChatHistoryItem[];
 };
 
@@ -32,9 +38,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Message is required" }, { status: 400 });
   }
 
-  const history = Array.isArray(body.history) ? body.history : [];
-
   try {
+    const thread = await ensureChatThread(user.id, body.threadId, message);
+    const history =
+      body.threadId != null
+        ? (await getChatThreadMessages(user.id, thread.id)).map((item) => ({
+            role: item.role,
+            content: item.content,
+          }))
+        : Array.isArray(body.history)
+          ? body.history
+          : [];
+
+    await addChatMessage(thread.id, "user", message);
+
     const { accessToken, googleEmail } = await getValidGmailAccessToken(user.id);
     const reply = await runMailMindAgent({
       message,
@@ -43,7 +60,13 @@ export async function POST(request: Request) {
       gmailEmail: googleEmail,
     });
 
-    return NextResponse.json({ reply });
+    await addChatMessage(thread.id, "assistant", reply);
+
+    return NextResponse.json({
+      reply,
+      threadId: thread.id,
+      threadTitle: thread.title,
+    });
   } catch (error) {
     const rawMessage =
       error instanceof Error ? error.message : "Agent request failed";
