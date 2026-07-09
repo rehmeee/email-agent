@@ -7,11 +7,13 @@ import {
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { createLlm } from "@/lib/agent/llm";
 import { createGmailTools } from "@/lib/agent/tools/gmail";
+import {
+  type ChatHistoryItem,
+  type MailMindAgentInput,
+  wrapWithLangSmithTrace,
+} from "@/lib/agent/tracing";
 
-export type ChatHistoryItem = {
-  role: "user" | "assistant";
-  content: string;
-};
+export type { ChatHistoryItem } from "@/lib/agent/tracing";
 
 const SYSTEM_PROMPT = `You are MailMind, an AI email assistant.
 
@@ -67,15 +69,14 @@ function extractReply(messages: BaseMessage[]) {
   return String(last.content);
 }
 
-export async function runMailMindAgent(input: {
-  message: string;
-  history?: ChatHistoryItem[];
-  accessToken: string;
-  gmailEmail?: string | null;
-}) {
+async function runMailMindAgentImpl(input: MailMindAgentInput) {
   const llm = createLlm();
   const tools = createGmailTools(input.accessToken);
-  const agent = createReactAgent({ llm, tools });
+  const agent = createReactAgent({
+    llm,
+    tools,
+    name: "MailMind",
+  });
 
   const systemText = input.gmailEmail
     ? `${SYSTEM_PROMPT}\n\nConnected Gmail account: ${input.gmailEmail}`
@@ -87,7 +88,24 @@ export async function runMailMindAgent(input: {
     new HumanMessage(input.message),
   ];
 
-  const result = await agent.invoke({ messages });
+  const traceTags = ["mailmind", ...(input.traceContext?.tags ?? [])];
+
+  const result = await agent.invoke(
+    { messages },
+    {
+      runName: "MailMind Agent",
+      metadata: {
+        gmailEmail: input.gmailEmail ?? "unknown",
+        historyLength: input.history?.length ?? 0,
+        userId: input.traceContext?.userId,
+        chatThreadId: input.traceContext?.chatThreadId,
+        environment: input.traceContext?.environment,
+      },
+      tags: traceTags,
+    }
+  );
 
   return extractReply(result.messages);
 }
+
+export const runMailMindAgent = wrapWithLangSmithTrace(runMailMindAgentImpl);
