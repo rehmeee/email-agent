@@ -58,6 +58,12 @@ export async function POST(request: Request) {
       history,
       accessToken,
       gmailEmail: googleEmail,
+      traceContext: {
+        userId: user.id,
+        chatThreadId: thread.id,
+        environment: process.env.NODE_ENV ?? "development",
+        tags: ["gmail-agent", "chat"],
+      },
     });
 
     await addChatMessage(thread.id, "assistant", reply);
