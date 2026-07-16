@@ -169,6 +169,109 @@ export async function searchGmailMessages(
   return summaries;
 }
 
+export type SentMailSample = {
+  id: string;
+  subject: string;
+  to: string;
+  date: string;
+  body: string;
+};
+
+function stripQuotedReply(body: string) {
+  const lines = body.split(/\r?\n/);
+  const kept: string[] = [];
+
+  for (const line of lines) {
+    if (/^on .+ wrote:$/i.test(line.trim())) break;
+    if (line.trim() === "--") break;
+    if (line.startsWith(">")) continue;
+    kept.push(line);
+  }
+
+  return kept.join("\n").trim();
+}
+
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const current = nextIndex;
+      nextIndex += 1;
+      results[current] = await mapper(items[current]);
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => worker()
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+export async function fetchSentMessagesForPersona(
+  accessToken: string,
+  options?: { maxMessages?: number; maxBodyChars?: number; concurrency?: number }
+): Promise<SentMailSample[]> {
+  // List uses Gmail maxResults (same idea as list_emails). Full bodies are
+  // fetched in small concurrent batches to avoid "too many concurrent requests".
+  const maxMessages = options?.maxMessages ?? 40;
+  const maxBodyChars = options?.maxBodyChars ?? 1000;
+  const concurrency = options?.concurrency ?? 3;
+
+  const list = await gmailFetch<GmailMessageListResponse>(
+    accessToken,
+    `/messages?q=${encodeURIComponent("in:sent")}&maxResults=${maxMessages}`
+  );
+
+  if (!list.messages?.length) {
+    return [];
+  }
+
+  const samples = await mapPool(list.messages, concurrency, async (item) => {
+    const full = await getGmailMessage(accessToken, item.id, "full");
+
+    const cleaned = stripQuotedReply(full.body).slice(0, maxBodyChars).trim();
+
+    if (!cleaned) {
+      return null;
+    }
+
+    return {
+      id: full.id,
+      subject: full.subject,
+      to: full.to,
+      date: full.date,
+      body: cleaned,
+    } satisfies SentMailSample;
+  });
+
+  return samples.filter((sample): sample is SentMailSample => sample != null);
+}
+
+export async function getGmailMessage(
+  accessToken: string,
+  messageId: string,
+  mode: "summary"
+): Promise<GmailMessageSummary>;
+export async function getGmailMessage(
+  accessToken: string,
+  messageId: string,
+  mode?: "full"
+): Promise<
+  GmailMessageSummary & {
+    body: string;
+    messageIdHeader: string;
+    to: string;
+    replyToEmail: string;
+  }
+>;
 export async function getGmailMessage(
   accessToken: string,
   messageId: string,

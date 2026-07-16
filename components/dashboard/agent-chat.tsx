@@ -14,6 +14,8 @@ import { MailMindRobot } from "@/components/dashboard/mailmind-robot";
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
+  pendingDraftId?: string | null;
+  draftStatus?: "pending" | "approved" | "rejected";
 };
 
 type ChatThread = {
@@ -68,9 +70,29 @@ function AgentThinkingPanel({ message }: { message: string }) {
 function AssistantMessage({
   content,
   animate,
+  pendingDraftId,
+  draftStatus,
+  isRejecting,
+  rejectFeedback,
+  onRejectFeedbackChange,
+  onStartReject,
+  onCancelReject,
+  onSubmitReject,
+  onApprove,
+  isActing,
 }: {
   content: string;
   animate?: boolean;
+  pendingDraftId?: string | null;
+  draftStatus?: "pending" | "approved" | "rejected";
+  isRejecting?: boolean;
+  rejectFeedback?: string;
+  onRejectFeedbackChange?: (value: string) => void;
+  onStartReject?: (draftId: string) => void;
+  onCancelReject?: () => void;
+  onSubmitReject?: (draftId: string) => void;
+  onApprove?: (draftId: string) => void;
+  isActing?: boolean;
 }) {
   return (
     <div className="flex gap-3">
@@ -80,6 +102,68 @@ function AssistantMessage({
           MailMind
         </p>
         <p className="whitespace-pre-wrap">{content}</p>
+        {pendingDraftId && draftStatus === "pending" && !isRejecting ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/[0.08] px-3 py-2">
+            <p className="mr-auto text-xs text-amber-100/90">
+              Draft ready for review — approve to save in Gmail, or reject with feedback.
+            </p>
+            <button
+              type="button"
+              disabled={isActing}
+              onClick={() => onApprove?.(pendingDraftId)}
+              className="rounded-full bg-emerald-500/90 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-emerald-400 disabled:opacity-50"
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              disabled={isActing}
+              onClick={() => onStartReject?.(pendingDraftId)}
+              className="rounded-full border border-white/15 bg-white/[0.06] px-3 py-1 text-[11px] font-semibold text-zinc-200 transition hover:bg-white/[0.1] disabled:opacity-50"
+            >
+              Reject
+            </button>
+          </div>
+        ) : null}
+        {pendingDraftId && draftStatus === "pending" && isRejecting ? (
+          <div className="mt-3 space-y-2 rounded-xl border border-rose-500/25 bg-rose-500/[0.08] px-3 py-3">
+            <p className="text-xs font-medium text-rose-100/90">
+              What should MailMind change? Your feedback updates the writing persona, then a new draft is proposed here.
+            </p>
+            <textarea
+              rows={3}
+              value={rejectFeedback ?? ""}
+              onChange={(event) => onRejectFeedbackChange?.(event.target.value)}
+              placeholder="e.g. Too formal — make it shorter and friendlier"
+              disabled={isActing}
+              className="w-full resize-y rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-rose-400/40 disabled:opacity-50"
+            />
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={isActing || !(rejectFeedback ?? "").trim()}
+                onClick={() => onSubmitReject?.(pendingDraftId)}
+                className="rounded-full bg-rose-500/90 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-rose-400 disabled:opacity-50"
+              >
+                {isActing ? "Improving draft..." : "Submit feedback"}
+              </button>
+              <button
+                type="button"
+                disabled={isActing}
+                onClick={() => onCancelReject?.()}
+                className="rounded-full border border-white/15 bg-white/[0.06] px-3 py-1 text-[11px] font-semibold text-zinc-200 transition hover:bg-white/[0.1] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {pendingDraftId && draftStatus === "approved" ? (
+          <p className="mt-2 text-xs text-emerald-300/90">Draft approved and saved to Gmail.</p>
+        ) : null}
+        {pendingDraftId && draftStatus === "rejected" ? (
+          <p className="mt-2 text-xs text-zinc-400">Draft rejected — persona updated from your feedback.</p>
+        ) : null}
       </div>
     </div>
   );
@@ -96,6 +180,10 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
   const [error, setError] = useState<string | null>(null);
   const [thinkingStep, setThinkingStep] = useState(0);
   const [speakingIndex, setSpeakingIndex] = useState<number | null>(null);
+  const [isActingOnDraft, setIsActingOnDraft] = useState(false);
+  const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
+  const [rejectingDraftId, setRejectingDraftId] = useState<string | null>(null);
+  const [rejectFeedback, setRejectFeedback] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -243,6 +331,7 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
         reply?: string;
         threadId?: string;
         threadTitle?: string;
+        pendingDraftId?: string | null;
         error?: string;
       };
 
@@ -253,7 +342,12 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
       const assistantIndex = nextMessages.length;
       setMessages([
         ...nextMessages,
-        { role: "assistant", content: payload.reply ?? "No response returned." },
+        {
+          role: "assistant",
+          content: payload.reply ?? "No response returned.",
+          pendingDraftId: payload.pendingDraftId ?? null,
+          draftStatus: payload.pendingDraftId ? "pending" : undefined,
+        },
       ]);
       setSpeakingIndex(assistantIndex);
 
@@ -277,10 +371,6 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
           return [updatedThread, ...current];
         });
       }
-
-      if (trimmed.toLowerCase().includes("draft")) {
-        onDraftsMaybeCreated?.();
-      }
     } catch (sendError) {
       const message =
         sendError instanceof Error ? sendError.message : "Agent request failed";
@@ -295,10 +385,192 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
     await sendMessage(input);
   }
 
+  function updateDraftStatus(
+    draftId: string,
+    status: "approved" | "rejected",
+    followUp: string
+  ) {
+    setMessages((current) => [
+      ...current.map((message) =>
+        message.pendingDraftId === draftId
+          ? { ...message, draftStatus: status }
+          : message
+      ),
+      { role: "assistant", content: followUp },
+    ]);
+  }
+
+  function applyRejectResult(
+    draftId: string,
+    feedback: string,
+    followUp: string,
+    nextPendingDraftId?: string | null
+  ) {
+    setMessages((current) => {
+      const updated = current.map((message) =>
+        message.pendingDraftId === draftId
+          ? { ...message, draftStatus: "rejected" as const }
+          : message
+      );
+
+      return [
+        ...updated,
+        {
+          role: "user" as const,
+          content: `Reject feedback: ${feedback}`,
+        },
+        {
+          role: "assistant" as const,
+          content: followUp,
+          pendingDraftId: nextPendingDraftId ?? null,
+          draftStatus: nextPendingDraftId ? ("pending" as const) : undefined,
+        },
+      ];
+    });
+  }
+
+  async function handleApproveDraft(draftId: string) {
+    if (isActingOnDraft) return;
+    setRejectingDraftId(null);
+    setRejectFeedback("");
+    setIsActingOnDraft(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/agent/drafts/${draftId}/approve`, {
+        method: "POST",
+      });
+      const payload = (await response.json()) as {
+        reply?: string;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Failed to approve draft");
+      }
+
+      updateDraftStatus(
+        draftId,
+        "approved",
+        payload.reply ?? "Draft approved and saved to Gmail."
+      );
+      onDraftsMaybeCreated?.();
+    } catch (approveError) {
+      setError(
+        approveError instanceof Error
+          ? approveError.message
+          : "Failed to approve draft"
+      );
+    } finally {
+      setIsActingOnDraft(false);
+    }
+  }
+
+  function handleStartReject(draftId: string) {
+    if (isActingOnDraft) return;
+    setError(null);
+    setRejectingDraftId(draftId);
+    setRejectFeedback("");
+  }
+
+  function handleCancelReject() {
+    if (isActingOnDraft) return;
+    setRejectingDraftId(null);
+    setRejectFeedback("");
+  }
+
+  async function handleSubmitReject(draftId: string) {
+    if (isActingOnDraft) return;
+
+    const trimmed = rejectFeedback.trim();
+    if (!trimmed) {
+      setError("Feedback is required to reject a draft.");
+      return;
+    }
+
+    setIsActingOnDraft(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/agent/drafts/${draftId}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feedback: trimmed }),
+      });
+      const payload = (await response.json()) as {
+        reply?: string;
+        pendingDraftId?: string | null;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Failed to reject draft");
+      }
+
+      applyRejectResult(
+        draftId,
+        trimmed,
+        payload.reply ??
+          "Feedback saved. Here is an improved draft with your new instructions.",
+        payload.pendingDraftId ?? null
+      );
+
+      setRejectingDraftId(null);
+      setRejectFeedback("");
+    } catch (rejectError) {
+      setError(
+        rejectError instanceof Error
+          ? rejectError.message
+          : "Failed to reject draft"
+      );
+    } finally {
+      setIsActingOnDraft(false);
+    }
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void sendMessage(input);
+    }
+  }
+
+  async function handleDeleteThread(threadId: string) {
+    if (deletingThreadId || isLoading) return;
+
+    const confirmed = window.confirm(
+      "Delete this chat? This cannot be undone."
+    );
+    if (!confirmed) return;
+
+    setDeletingThreadId(threadId);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/chat/threads/${threadId}`, {
+        method: "DELETE",
+      });
+      const payload = (await response.json()) as { error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Failed to delete chat");
+      }
+
+      setThreads((current) => current.filter((thread) => thread.id !== threadId));
+
+      if (activeThreadId === threadId) {
+        setActiveThreadId(null);
+        setMessages([]);
+        setSpeakingIndex(null);
+      }
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Failed to delete chat"
+      );
+    } finally {
+      setDeletingThreadId(null);
     }
   }
 
@@ -324,17 +596,46 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
             <ul className="space-y-1">
               {threads.map((thread) => (
                 <li key={thread.id}>
-                  <button
-                    type="button"
-                    onClick={() => void loadThreadMessages(thread.id)}
-                    className={`w-full rounded-lg px-3 py-2 text-left text-xs transition ${
+                  <div
+                    className={`group flex items-center gap-1 rounded-lg pr-1 transition ${
                       activeThreadId === thread.id
                         ? "bg-white/[0.08] text-white"
                         : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                     }`}
                   >
-                    <p className="truncate font-medium">{thread.title}</p>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => void loadThreadMessages(thread.id)}
+                      className="min-w-0 flex-1 px-3 py-2 text-left text-xs"
+                    >
+                      <p className="truncate font-medium">{thread.title}</p>
+                    </button>
+                    <button
+                      type="button"
+                      title="Delete chat"
+                      aria-label={`Delete chat ${thread.title}`}
+                      disabled={deletingThreadId === thread.id}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleDeleteThread(thread.id);
+                      }}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 opacity-0 transition hover:bg-red-500/15 hover:text-red-300 group-hover:opacity-100 focus:opacity-100 disabled:opacity-50"
+                    >
+                      <svg
+                        className="h-3.5 w-3.5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={1.8}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0v12a1 1 0 001 1h6a1 1 0 001-1V7M10 11v6M14 11v6"
+                        />
+                      </svg>
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -430,11 +731,34 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
                       key={`${message.role}-${index}`}
                       content={message.content}
                       animate={speakingIndex === index}
+                      pendingDraftId={message.pendingDraftId}
+                      draftStatus={message.draftStatus}
+                      isRejecting={
+                        Boolean(
+                          message.pendingDraftId &&
+                            message.pendingDraftId === rejectingDraftId
+                        )
+                      }
+                      rejectFeedback={rejectFeedback}
+                      onRejectFeedbackChange={setRejectFeedback}
+                      onStartReject={handleStartReject}
+                      onCancelReject={handleCancelReject}
+                      onSubmitReject={handleSubmitReject}
+                      onApprove={handleApproveDraft}
+                      isActing={isActingOnDraft}
                     />
                   )
                 )}
 
-                {isLoading ? <AgentThinkingPanel message={thinkingMessage} /> : null}
+                {isLoading || isActingOnDraft ? (
+                  <AgentThinkingPanel
+                    message={
+                      isActingOnDraft
+                        ? "Updating persona and rewriting your draft..."
+                        : thinkingMessage
+                    }
+                  />
+                ) : null}
 
                 {error ? (
                   <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">

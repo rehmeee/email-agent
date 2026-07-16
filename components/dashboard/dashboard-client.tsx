@@ -103,8 +103,116 @@ export function DashboardClient({
   const [activeView, setActiveView] = useState<DashboardView>("overview");
   const [draftCount, setDraftCount] = useState<number | null>(null);
   const [draftsRefreshKey, setDraftsRefreshKey] = useState(0);
+  const [personaStatus, setPersonaStatus] = useState<
+    "idle" | "building" | "ready" | "failed" | null
+  >(null);
+  const [personaMessage, setPersonaMessage] = useState<string | null>(null);
 
   const metrics = buildMetrics(gmail.connected, agentReady, draftCount);
+
+  useEffect(() => {
+    if (!agentReady) return;
+
+    let cancelled = false;
+    const bootKey = "mailmind_persona_boot_started";
+
+    void (async () => {
+      try {
+        const statusResponse = await fetch("/api/agent/persona/bootstrap");
+        const statusPayload = (await statusResponse.json()) as {
+          status?: string | null;
+          error?: string;
+        };
+
+        if (cancelled) return;
+
+        const currentStatus = statusPayload.status ?? null;
+
+        // Persona is created once. Reconnect Gmail must not rebuild it —
+        // later improvements come from draft reject feedback.
+        if (currentStatus === "ready") {
+          setPersonaStatus("ready");
+          if (gmailSuccess) {
+            setPersonaMessage("Gmail connected. Your existing writing persona is unchanged.");
+          }
+          return;
+        }
+
+        if (currentStatus === "building") {
+          setPersonaStatus("building");
+          setPersonaMessage("Building your writing persona from Sent mail...");
+          return;
+        }
+
+        const shouldBuild =
+          currentStatus == null || currentStatus === "failed";
+
+        if (!shouldBuild) {
+          setPersonaStatus("ready");
+          return;
+        }
+
+        // Avoid React Strict Mode / double-mount firing two concurrent POSTs.
+        if (
+          typeof sessionStorage !== "undefined" &&
+          sessionStorage.getItem(bootKey) === "1"
+        ) {
+          setPersonaStatus("building");
+          setPersonaMessage("Building your writing persona from Sent mail...");
+          return;
+        }
+
+        sessionStorage.setItem(bootKey, "1");
+        setPersonaStatus("building");
+        setPersonaMessage("Building your writing persona from Sent mail...");
+
+        const response = await fetch("/api/agent/persona/bootstrap", {
+          method: "POST",
+        });
+        const payload = (await response.json()) as {
+          reply?: string;
+          status?: string;
+          error?: string;
+          skipped?: boolean;
+        };
+
+        if (cancelled) return;
+
+        sessionStorage.removeItem(bootKey);
+
+        if (!response.ok) {
+          setPersonaStatus("failed");
+          setPersonaMessage(payload.error ?? "Persona bootstrap failed");
+          return;
+        }
+
+        setPersonaStatus(
+          payload.status === "ready" ||
+            payload.status === "failed" ||
+            payload.status === "building"
+            ? payload.status
+            : "ready"
+        );
+        setPersonaMessage(
+          payload.skipped
+            ? "Your writing persona is already ready."
+            : (payload.reply ?? "Persona ready.")
+        );
+      } catch (error) {
+        sessionStorage.removeItem(bootKey);
+        if (!cancelled) {
+          setPersonaStatus("failed");
+          setPersonaMessage(
+            error instanceof Error ? error.message : "Persona bootstrap failed"
+          );
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentReady, gmailSuccess]);
 
   useEffect(() => {
     if (!agentReady) return;
@@ -297,7 +405,43 @@ export function DashboardClient({
 
         {gmailSuccess ? (
           <div className="mx-6 mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
-            Gmail connected successfully. Your inbox is ready for the agent.
+            Gmail connected successfully.
+            {personaStatus === "ready"
+              ? " Your existing writing persona was kept."
+              : personaStatus === "building"
+                ? " Creating your writing persona for the first time…"
+                : ""}
+          </div>
+        ) : null}
+
+        {personaStatus === "building" ? (
+          <div className="mx-6 mt-4 rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-200">
+            {personaMessage ?? "Building your writing persona from Sent mail..."}
+          </div>
+        ) : null}
+
+        {personaStatus === "ready" && personaMessage ? (
+          <div className="mx-6 mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+            {personaMessage}
+          </div>
+        ) : null}
+
+        {personaStatus === "failed" && personaMessage ? (
+          <div className="mx-6 mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+            {personaMessage}
+            {personaMessage.toLowerCase().includes("persona tables are missing") ||
+            personaMessage.toLowerCase().includes("schema cache") ? (
+              <>
+                {" "}
+                Run{" "}
+                <code className="rounded bg-black/30 px-1.5 py-0.5 text-xs">
+                  supabase/migrations/003_persona_feedback.sql
+                </code>{" "}
+                in Supabase, then refresh.
+              </>
+            ) : (
+              <> Wait a few seconds, then refresh the page to retry.</>
+            )}
           </div>
         ) : null}
 

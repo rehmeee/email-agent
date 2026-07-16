@@ -1,4 +1,5 @@
 import { traceable } from "langsmith/traceable";
+import type { AgentEventType } from "@/lib/agent/state";
 
 export type ChatHistoryItem = {
   role: "user" | "assistant";
@@ -12,11 +13,24 @@ export type AgentTraceContext = {
   tags?: string[];
 };
 
+export type MailMindAgentResult = {
+  reply: string;
+  pendingDraftId?: string | null;
+  gmailDraftCreated?: boolean;
+  personaStatus?: string | null;
+  memorySaved?: boolean;
+};
+
 export type MailMindAgentInput = {
-  message: string;
+  eventType?: AgentEventType;
+  message?: string;
   history?: ChatHistoryItem[];
   accessToken: string;
   gmailEmail?: string | null;
+  userId: string;
+  chatThreadId?: string | null;
+  pendingDraftId?: string | null;
+  feedbackText?: string | null;
   traceContext?: AgentTraceContext;
 };
 
@@ -37,15 +51,22 @@ export function getLangSmithProject() {
 
 export function redactAgentInput(input: MailMindAgentInput) {
   return {
+    eventType: input.eventType ?? "chat",
     message: input.message,
     historyLength: input.history?.length ?? 0,
     gmailEmail: input.gmailEmail ?? null,
+    userId: input.userId,
+    chatThreadId: input.chatThreadId ?? null,
+    pendingDraftId: input.pendingDraftId ?? null,
+    feedbackText: input.feedbackText ?? null,
     traceContext: input.traceContext,
     accessToken: "[REDACTED]",
   };
 }
 
-export function wrapWithLangSmithTrace(fn: (input: MailMindAgentInput) => Promise<string>) {
+export function wrapWithLangSmithTrace(
+  fn: (input: MailMindAgentInput) => Promise<MailMindAgentResult>
+) {
   if (!isLangSmithTracingEnabled()) {
     return fn;
   }

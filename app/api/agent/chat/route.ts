@@ -53,11 +53,14 @@ export async function POST(request: Request) {
     await addChatMessage(thread.id, "user", message);
 
     const { accessToken, googleEmail } = await getValidGmailAccessToken(user.id);
-    const reply = await runMailMindAgent({
+    const result = await runMailMindAgent({
+      eventType: "chat",
       message,
       history,
       accessToken,
       gmailEmail: googleEmail,
+      userId: user.id,
+      chatThreadId: thread.id,
       traceContext: {
         userId: user.id,
         chatThreadId: thread.id,
@@ -66,12 +69,14 @@ export async function POST(request: Request) {
       },
     });
 
-    await addChatMessage(thread.id, "assistant", reply);
+    await addChatMessage(thread.id, "assistant", result.reply);
 
     return NextResponse.json({
-      reply,
+      reply: result.reply,
       threadId: thread.id,
       threadTitle: thread.title,
+      pendingDraftId: result.pendingDraftId ?? null,
+      memorySaved: result.memorySaved ?? false,
     });
   } catch (error) {
     const rawMessage =
