@@ -6,7 +6,8 @@ Next.js app with **Supabase Auth** (email + Google), dashboard, and CI/CD.
 
 1. **Sign up / sign in** — email + password or Google at `/login`
 2. **Connect Gmail** — separate step on dashboard (Gmail API scopes)
-3. **Agent** — coming next (LangGraph + OpenRouter)
+3. **Agent** — LangGraph main graph (persona + email + feedback) via OpenRouter
+4. **SQL** — run `002_chat_threads.sql`, `003_persona_feedback.sql`, then `004_agent_memory_profile.sql` (reshapes `agent_memory` to one JSON doc per user)
 
 ## Setup
 

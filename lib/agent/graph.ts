@@ -1,40 +1,19 @@
 import {
   AIMessage,
-  BaseMessage,
   HumanMessage,
-  SystemMessage,
+  type BaseMessage,
 } from "@langchain/core/messages";
-import { createReactAgent } from "@langchain/langgraph/prebuilt";
-import { createLlm } from "@/lib/agent/llm";
-import { createGmailTools } from "@/lib/agent/tools/gmail";
+import { invokeMainGraph } from "@/lib/agent/main-graph";
+import { buildApproveMessages } from "@/lib/agent/subgraphs/email";
 import {
   type ChatHistoryItem,
   type MailMindAgentInput,
+  type MailMindAgentResult,
   wrapWithLangSmithTrace,
 } from "@/lib/agent/tracing";
+import { getPendingDraft } from "@/lib/drafts/db";
 
-export type { ChatHistoryItem } from "@/lib/agent/tracing";
-
-const SYSTEM_PROMPT = `You are MailMind, an AI email assistant.
-
-You can inspect the user's Gmail inbox and create draft emails using tools.
-
-When asked about emails:
-1. Use search_emails or list_emails to find relevant messages
-2. Use read_email when the user needs full details, a summary, or context for a reply
-3. Reply clearly with subject, sender, date, and a helpful summary
-
-When asked to draft or write an email:
-1. If replying to an existing message, call read_email first to get threadId, replyToEmail, subject, and messageIdHeader
-2. Call create_draft with to, subject, body, and for replies also threadId and inReplyTo (use messageIdHeader from read_email)
-3. Use subject "Re: <original subject>" for replies unless the user specifies otherwise
-4. Tell the user the draft was saved in Gmail → Drafts and was NOT sent
-
-Rules:
-- Do not invent emails. Only describe messages returned by tools.
-- If no emails match, say so clearly.
-- Never claim you sent an email. create_draft only saves a draft.
-- Do not call create_draft without a clear recipient and body.`;
+export type { ChatHistoryItem, MailMindAgentResult } from "@/lib/agent/tracing";
 
 function toLangChainMessages(history: ChatHistoryItem[]): BaseMessage[] {
   return history.map((item) =>
@@ -44,68 +23,117 @@ function toLangChainMessages(history: ChatHistoryItem[]): BaseMessage[] {
   );
 }
 
-function extractReply(messages: BaseMessage[]) {
-  const last = messages.at(-1);
+async function runMailMindAgentImpl(
+  input: MailMindAgentInput
+): Promise<MailMindAgentResult> {
+  const eventType = input.eventType ?? "chat";
 
-  if (!last) {
-    return "I could not generate a response.";
+  if (eventType === "gmail_connected") {
+    const result = await invokeMainGraph({
+      eventType,
+      userId: input.userId,
+      accessToken: input.accessToken,
+      gmailEmail: input.gmailEmail,
+      messages: [],
+    });
+
+    return {
+      reply: result.reply || "Persona generation finished.",
+      personaStatus:
+        typeof result.resultMeta?.personaStatus === "string"
+          ? result.resultMeta.personaStatus
+          : "ready",
+    };
   }
 
-  if (typeof last.content === "string") {
-    return last.content;
+  if (eventType === "feedback") {
+    if (!input.pendingDraftId) {
+      throw new Error("pendingDraftId is required for feedback");
+    }
+
+    const pendingDraft = await getPendingDraft(
+      input.userId,
+      input.pendingDraftId
+    );
+    if (!pendingDraft) {
+      throw new Error("Pending draft not found");
+    }
+
+    const result = await invokeMainGraph({
+      eventType,
+      userId: input.userId,
+      accessToken: input.accessToken,
+      gmailEmail: input.gmailEmail,
+      pendingDraftId: input.pendingDraftId,
+      pendingDraft,
+      feedbackText: input.feedbackText,
+      messages: [],
+    });
+
+    return {
+      reply: result.reply || "Feedback saved.",
+    };
   }
 
-  if (Array.isArray(last.content)) {
-    return last.content
-      .map((part) => {
-        if (typeof part === "string") return part;
-        if ("text" in part && typeof part.text === "string") return part.text;
-        return "";
-      })
-      .join("\n")
-      .trim();
+  if (eventType === "approve") {
+    if (!input.pendingDraftId) {
+      throw new Error("pendingDraftId is required for approve");
+    }
+
+    const pendingDraft = await getPendingDraft(
+      input.userId,
+      input.pendingDraftId
+    );
+    if (!pendingDraft) {
+      throw new Error("Pending draft not found");
+    }
+    if (pendingDraft.status !== "pending") {
+      throw new Error(`Draft is already ${pendingDraft.status}`);
+    }
+
+    const result = await invokeMainGraph({
+      eventType,
+      userId: input.userId,
+      accessToken: input.accessToken,
+      gmailEmail: input.gmailEmail,
+      chatThreadId: input.chatThreadId ?? pendingDraft.threadId,
+      pendingDraftId: input.pendingDraftId,
+      pendingDraft,
+      messages: buildApproveMessages(input.pendingDraftId),
+    });
+
+    return {
+      reply: result.reply || "Draft saved to Gmail.",
+      pendingDraftId: input.pendingDraftId,
+      gmailDraftCreated: Boolean(result.gmailDraftId),
+    };
   }
 
-  return String(last.content);
-}
+  const message = input.message?.trim();
+  if (!message) {
+    throw new Error("Message is required");
+  }
 
-async function runMailMindAgentImpl(input: MailMindAgentInput) {
-  const llm = createLlm();
-  const tools = createGmailTools(input.accessToken);
-  const agent = createReactAgent({
-    llm,
-    tools,
-    name: "MailMind",
+  const result = await invokeMainGraph({
+    eventType: "chat",
+    userId: input.userId,
+    accessToken: input.accessToken,
+    gmailEmail: input.gmailEmail,
+    chatThreadId: input.chatThreadId,
+    messages: [
+      ...toLangChainMessages(input.history ?? []),
+      new HumanMessage(message),
+    ],
   });
 
-  const systemText = input.gmailEmail
-    ? `${SYSTEM_PROMPT}\n\nConnected Gmail account: ${input.gmailEmail}`
-    : SYSTEM_PROMPT;
-
-  const messages: BaseMessage[] = [
-    new SystemMessage(systemText),
-    ...toLangChainMessages(input.history ?? []),
-    new HumanMessage(input.message),
-  ];
-
-  const traceTags = ["mailmind", ...(input.traceContext?.tags ?? [])];
-
-  const result = await agent.invoke(
-    { messages },
-    {
-      runName: "MailMind Agent",
-      metadata: {
-        gmailEmail: input.gmailEmail ?? "unknown",
-        historyLength: input.history?.length ?? 0,
-        userId: input.traceContext?.userId,
-        chatThreadId: input.traceContext?.chatThreadId,
-        environment: input.traceContext?.environment,
-      },
-      tags: traceTags,
-    }
-  );
-
-  return extractReply(result.messages);
+  return {
+    reply: result.reply || "I could not generate a response.",
+    pendingDraftId:
+      typeof result.resultMeta?.pendingDraftId === "string"
+        ? result.resultMeta.pendingDraftId
+        : result.pendingDraftId ?? null,
+    memorySaved: Boolean(result.resultMeta?.memorySaved),
+  };
 }
 
 export const runMailMindAgent = wrapWithLangSmithTrace(runMailMindAgentImpl);

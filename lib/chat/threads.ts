@@ -146,6 +146,33 @@ export async function addChatMessage(
     .eq("id", threadId);
 }
 
+export async function deleteChatThread(userId: string, threadId: string) {
+  const admin = createAdminClient();
+
+  const { data, error } = await admin
+    .from("chat_threads")
+    .delete()
+    .eq("id", threadId)
+    .eq("user_id", userId)
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingChatTableError(error.message)) {
+      throw new Error(
+        "Database setup required. Run supabase/migrations/002_chat_threads.sql in the Supabase SQL Editor."
+      );
+    }
+    throw new Error(`Failed to delete chat thread: ${error.message}`);
+  }
+
+  if (!data) {
+    throw new Error("Chat thread not found.");
+  }
+
+  return { id: data.id };
+}
+
 export async function ensureChatThread(
   userId: string,
   threadId: string | null | undefined,
