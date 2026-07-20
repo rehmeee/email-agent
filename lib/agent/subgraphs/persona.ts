@@ -14,35 +14,52 @@ import {
   personaProfileSchema,
 } from "@/lib/persona/types";
 
+const MIN_SENT_SAMPLES = 5;
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function extractJsonObject(text: string) {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const raw = fenced?.[1]?.trim() ?? text.trim();
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("No JSON object found in model response");
+  }
+  return JSON.parse(raw.slice(start, end + 1)) as unknown;
+}
+
 async function fetchSent(state: MailMindStateType) {
   await setPersonaBuilding(state.userId);
 
-  const samples = await fetchSentMessagesForPersona(state.accessToken, {
-    maxMessages: 40,
-    maxBodyChars: 1000,
-    concurrency: 3,
-  });
+  try {
+    const samples = await fetchSentMessagesForPersona(state.accessToken, {
+      maxMessages: 40,
+      maxBodyChars: 1000,
+      concurrency: 3,
+    });
 
-  return { sentSamples: samples };
+    return { sentSamples: samples };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to fetch Sent mail";
+    await markPersonaFailed(state.userId, message);
+    throw error;
+  }
 }
 
 async function buildProfile(state: MailMindStateType) {
   const samples = state.sentSamples ?? [];
 
-  if (samples.length === 0) {
-    const profile = emptyPersonaProfile();
-    return {
-      persona: profile,
-      resultMeta: {
-        personaSourceSampleCount: 0,
-        personaNote: "No sent emails found; used a default neutral profile.",
-      },
-    };
+  if (samples.length < MIN_SENT_SAMPLES) {
+    // Do not mark persona "ready" with an empty/placeholder profile.
+    throw new Error(
+      `Not enough sent emails to build persona (got ${samples.length}, need at least ${MIN_SENT_SAMPLES}).`
+    );
   }
 
-  const llm = createLlm().withStructuredOutput(personaProfileSchema, {
-    method: "jsonMode",
-  });
   const sampleBlock = samples
     .slice(0, 40)
     .map(
@@ -51,24 +68,81 @@ async function buildProfile(state: MailMindStateType) {
     )
     .join("\n\n");
 
-  const profile = await llm.invoke([
-    new SystemMessage(
-      `You extract an email writing persona from the user's Sent mailbox.
+  // 1) Try structured output (best case). If OpenRouter rejects it,
+  // 2) Fallback to plain JSON-only + parse with Zod.
+  try {
+    const llm = createLlm().withStructuredOutput(personaProfileSchema, {
+      method: "jsonMode",
+    });
+
+    const profile = await llm.invoke([
+      new SystemMessage(
+        `You extract an email writing persona from the user's Sent mailbox.
 Infer only from the samples. Do not invent a biography.
 If signals are thin, choose conservative neutral defaults.
 Set feedbackSummary.do and feedbackSummary.dont to empty arrays on first create
 (those are filled later from draft rejection feedback).
 Return structured persona fields only.`
-    ),
-    new HumanMessage(
-      `Analyze these sent emails and produce the writer's persona profile:\n\n${sampleBlock}`
-    ),
-  ]);
+      ),
+      new HumanMessage(
+        `Analyze these sent emails and produce the writer's persona profile:\n\n${sampleBlock}`
+      ),
+    ]);
 
-  return {
-    persona: normalizePersonaProfile(profile),
-    resultMeta: { personaSourceSampleCount: samples.length },
-  };
+    return {
+      persona: normalizePersonaProfile(profile),
+      resultMeta: { personaSourceSampleCount: samples.length },
+    };
+  } catch {
+    // Structured output can fail with provider 400 on some schemas/models.
+    // Fallback keeps persona generation resilient.
+  }
+
+  try {
+    const llm = createLlm();
+    const response = await llm.invoke([
+      new SystemMessage(
+        `You are generating a MailMind persona profile.
+Return ONLY valid JSON (no markdown, no commentary) matching exactly this shape:
+{
+  "tone": string,
+  "formality": "casual"|"neutral"|"formal",
+  "avgLength": "short"|"medium"|"long",
+  "greetingStyle": string,
+  "signOff": string,
+  "commonPhrases": string[],
+  "avoid": string[],
+  "voiceNotes": string,
+  "exampleSnippets": string[],
+  "feedbackSummary": { "do": string[], "dont": string[] }
+}
+Rules:
+- Infer only from the provided samples.
+- Set feedbackSummary.do and feedbackSummary.dont to [] on first create.`
+      ),
+      new HumanMessage(
+        `Analyze these sent emails and output the persona JSON:\n\n${sampleBlock}`
+      ),
+    ]);
+
+    const text = typeof response.content === "string" ? response.content : "";
+    const json = extractJsonObject(text);
+    const parsed = personaProfileSchema.safeParse(json);
+    if (!parsed.success) {
+      throw new Error(
+        `Persona JSON did not match schema: ${parsed.error.message}`
+      );
+    }
+
+    return {
+      persona: normalizePersonaProfile(parsed.data),
+      resultMeta: { personaSourceSampleCount: samples.length },
+    };
+  } catch (error) {
+    const message = errorMessage(error);
+    await markPersonaFailed(state.userId, message);
+    throw error;
+  }
 }
 
 async function savePersona(state: MailMindStateType) {
@@ -95,10 +169,7 @@ async function savePersona(state: MailMindStateType) {
   }
 
   return {
-    reply:
-      sampleCount === 0
-        ? "Persona ready with a default profile (no sent emails found yet). You can refresh after you send a few emails."
-        : `Persona ready from ${sampleCount} sent emails. MailMind will draft in your voice.`,
+    reply: `Persona ready from ${sampleCount} sent emails. MailMind will draft in your voice.`,
     resultMeta: { personaStatus: "ready" },
   };
 }

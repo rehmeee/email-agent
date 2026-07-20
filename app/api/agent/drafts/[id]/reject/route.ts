@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { runMailMindAgent } from "@/lib/agent/graph";
 import { addChatMessage } from "@/lib/chat/threads";
 import { getPendingDraft, markPendingDraftRejected } from "@/lib/drafts/db";
+import {
+  buildDraftReviewReply,
+  formatDraftPreviewBlock,
+  type PendingDraftPreview,
+} from "@/lib/drafts/preview";
 import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 import { createClient } from "@/lib/supabase/server";
 
@@ -61,8 +66,8 @@ export async function POST(request: Request, context: RouteContext) {
 
     const { accessToken, googleEmail } = await getValidGmailAccessToken(user.id);
 
-    // 1) Update writing persona from feedback (resilient; should not 400 on provider blips)
-    const feedbackResult = await runMailMindAgent({
+    // 1) Update writing persona from feedback (private; not shown to user)
+    await runMailMindAgent({
       eventType: "feedback",
       userId: user.id,
       accessToken,
@@ -78,13 +83,13 @@ export async function POST(request: Request, context: RouteContext) {
       },
     });
 
-    // 2) Propose improved draft — if provider fails, still return persona update
-    let redraftReply = "";
+    // 2) Propose improved draft
     let nextPendingDraftId: string | null = null;
+    let pendingDraftPreview: PendingDraftPreview | null = null;
     let redraftError: string | null = null;
 
     try {
-      const redraftMessage = `Rewrite an improved email draft using the user's feedback and updated writing persona. Call propose_draft once with the improved email (keep the same recipient and thread ids when possible).
+      const redraftMessage = `Rewrite an improved email draft using the user's feedback and updated writing persona. Call propose_draft exactly once with the improved email (keep the same recipient and thread ids when possible).
 
 Rejected draft:
 To: ${pending.toAddrs}
@@ -95,7 +100,7 @@ ${pending.body.slice(0, 2500)}
 User feedback:
 ${feedback}
 
-After proposing, briefly explain what you changed.`;
+Do not explain what you changed. Only call propose_draft.`;
 
       const redraftResult = await runMailMindAgent({
         eventType: "chat",
@@ -113,17 +118,31 @@ After proposing, briefly explain what you changed.`;
         },
       });
 
-      redraftReply = redraftResult.reply;
       nextPendingDraftId = redraftResult.pendingDraftId ?? null;
+
+      if (nextPendingDraftId) {
+        const newDraft = await getPendingDraft(user.id, nextPendingDraftId);
+        if (newDraft) {
+          pendingDraftPreview = {
+            to: newDraft.toAddrs,
+            subject: newDraft.subject,
+            body: newDraft.body,
+          };
+        }
+      }
     } catch (error) {
       redraftError = errorMessage(error);
-      redraftReply =
-        "I saved your feedback to the writing persona, but could not generate a new draft yet. Please ask me to rewrite the draft again in a moment.";
     }
 
-    const reply = [feedbackResult.reply, redraftReply]
-      .filter(Boolean)
-      .join("\n\n");
+    const reply = pendingDraftPreview
+      ? buildDraftReviewReply({ afterFeedback: true })
+      : redraftError
+        ? "Got it — I'll keep this in mind. I couldn't generate a new draft right now. Please ask me to try again in a moment."
+        : buildDraftReviewReply({ afterFeedback: true });
+
+    const storedReply = pendingDraftPreview
+      ? `${reply}\n\n${formatDraftPreviewBlock(pendingDraftPreview)}`
+      : reply;
 
     if (pending.threadId) {
       await addChatMessage(
@@ -131,12 +150,13 @@ After proposing, briefly explain what you changed.`;
         "user",
         `Reject feedback: ${feedback}`
       );
-      await addChatMessage(pending.threadId, "assistant", reply);
+      await addChatMessage(pending.threadId, "assistant", storedReply);
     }
 
     return NextResponse.json({
       reply,
       pendingDraftId: nextPendingDraftId,
+      pendingDraft: pendingDraftPreview,
       rejectedDraftId: id,
       redraftError,
     });

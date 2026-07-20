@@ -5,6 +5,12 @@ import {
   ensureChatThread,
   getChatThreadMessages,
 } from "@/lib/chat/threads";
+import { getPendingDraft } from "@/lib/drafts/db";
+import {
+  buildDraftReviewReply,
+  formatDraftPreviewBlock,
+  type PendingDraftPreview,
+} from "@/lib/drafts/preview";
 import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 import { createClient } from "@/lib/supabase/server";
 
@@ -69,13 +75,33 @@ export async function POST(request: Request) {
       },
     });
 
-    await addChatMessage(thread.id, "assistant", result.reply);
+    let reply = result.reply;
+    let pendingDraftPreview: PendingDraftPreview | null = null;
+
+    if (result.pendingDraftId) {
+      const draft = await getPendingDraft(user.id, result.pendingDraftId);
+      if (draft) {
+        pendingDraftPreview = {
+          to: draft.toAddrs,
+          subject: draft.subject,
+          body: draft.body,
+        };
+        reply = buildDraftReviewReply();
+      }
+    }
+
+    const storedReply = pendingDraftPreview
+      ? `${reply}\n\n${formatDraftPreviewBlock(pendingDraftPreview)}`
+      : reply;
+
+    await addChatMessage(thread.id, "assistant", storedReply);
 
     return NextResponse.json({
-      reply: result.reply,
+      reply,
       threadId: thread.id,
       threadTitle: thread.title,
       pendingDraftId: result.pendingDraftId ?? null,
+      pendingDraft: pendingDraftPreview,
       memorySaved: result.memorySaved ?? false,
     });
   } catch (error) {

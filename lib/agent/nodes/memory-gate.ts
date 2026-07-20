@@ -4,10 +4,12 @@ import { createLlm } from "@/lib/agent/llm";
 import type { MailMindStateType } from "@/lib/agent/state";
 import {
   formatMemoryForPrompt,
-  getAgentMemory,
   summarizeMemoryUpdates,
-  updateAgentMemory,
 } from "@/lib/memory/db";
+import {
+  getAgentMemoryCached,
+  updateAgentMemoryCached,
+} from "@/lib/memory/store";
 import type { MemoryUpdates } from "@/lib/memory/types";
 
 const memoryGateSchema = z.object({
@@ -133,29 +135,38 @@ Structured-output error: ${errorMessage(structuredError)}`
 }
 
 /**
- * Before every subgraph: if the chat message has durable user instructions,
- * merge them into the single per-user memory JSON. Never touches persona.
+ * Before every subgraph: hydrate user memory (Store cache → Supabase miss),
+ * and on chat messages merge durable prefs into the JSON. Never touches persona.
  */
 export async function memoryGateNode(state: MailMindStateType) {
-  if (state.eventType !== "chat") {
-    return {
-      resultMeta: { memoryGateSkipped: true, memorySaved: false },
-    };
-  }
-
-  const userText = latestHumanText(state);
-  if (!userText) {
-    return {
-      resultMeta: {
-        memoryGateSkipped: true,
-        memorySaved: false,
-        memoryExtractReason: "empty_user_message",
-      },
-    };
-  }
-
   try {
-    const currentMemory = await getAgentMemory(state.userId);
+    const { memory: currentMemory, source: memorySource } =
+      await getAgentMemoryCached(state.userId);
+
+    if (state.eventType !== "chat") {
+      return {
+        agentMemory: currentMemory,
+        resultMeta: {
+          memoryGateSkipped: true,
+          memorySaved: false,
+          memorySource,
+        },
+      };
+    }
+
+    const userText = latestHumanText(state);
+    if (!userText) {
+      return {
+        agentMemory: currentMemory,
+        resultMeta: {
+          memoryGateSkipped: true,
+          memorySaved: false,
+          memoryExtractReason: "empty_user_message",
+          memorySource,
+        },
+      };
+    }
+
     const extracted = await classifyMemoryGate(
       userText,
       formatMemoryForPrompt(currentMemory)
@@ -175,11 +186,12 @@ export async function memoryGateNode(state: MailMindStateType) {
           memorySaved: false,
           memoryGateSkipped: false,
           memoryExtractReason: extracted.reason,
+          memorySource,
         },
       };
     }
 
-    const merged = await updateAgentMemory(state.userId, updates);
+    const merged = await updateAgentMemoryCached(state.userId, updates);
     const summary = summarizeMemoryUpdates(updates);
 
     return {
@@ -190,6 +202,8 @@ export async function memoryGateNode(state: MailMindStateType) {
         memoryGateSkipped: false,
         memoryExtractReason: extracted.reason,
         memoryUpdateSummary: summary,
+        memorySource: "supabase",
+        memoryStoreUpdated: true,
       },
     };
   } catch (error) {
