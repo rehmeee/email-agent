@@ -413,3 +413,72 @@ export async function listGmailDrafts(
 
   return drafts;
 }
+
+type GmailHistoryRecord = {
+  id?: string;
+  messages?: { id: string; threadId: string }[];
+  messagesAdded?: {
+    message?: {
+      id: string;
+      threadId: string;
+      labelIds?: string[];
+    };
+  }[];
+};
+
+type GmailHistoryListResponse = {
+  history?: GmailHistoryRecord[];
+  historyId?: string;
+  nextPageToken?: string;
+};
+
+export type GmailHistorySyncResult = {
+  addedMessageIds: string[];
+  historyId: string;
+};
+
+export async function listGmailHistory(
+  accessToken: string,
+  startHistoryId: string
+): Promise<GmailHistorySyncResult> {
+  const added = new Set<string>();
+  let pageToken: string | undefined;
+  let latestHistoryId = startHistoryId;
+
+  do {
+    const params = new URLSearchParams({
+      startHistoryId,
+      historyTypes: "messageAdded",
+      labelId: "INBOX",
+    });
+    if (pageToken) {
+      params.set("pageToken", pageToken);
+    }
+
+    const response = await gmailFetch<GmailHistoryListResponse>(
+      accessToken,
+      `/history?${params.toString()}`
+    );
+
+    for (const record of response.history ?? []) {
+      for (const item of record.messagesAdded ?? []) {
+        const message = item.message;
+        if (!message?.id) continue;
+        const labels = message.labelIds ?? [];
+        if (labels.length > 0 && !labels.includes("INBOX")) continue;
+        added.add(message.id);
+      }
+    }
+
+    if (response.historyId) {
+      latestHistoryId = String(response.historyId);
+    }
+
+    pageToken = response.nextPageToken;
+  } while (pageToken);
+
+  return {
+    addedMessageIds: [...added],
+    historyId: latestHistoryId,
+  };
+}

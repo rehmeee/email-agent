@@ -185,6 +185,18 @@ export async function getGmailConnectionStatus(
 export async function deleteGmailConnection(userId: string) {
   const admin = createAdminClient();
 
+  try {
+    const { accessToken } = await getValidGmailAccessToken(userId, {
+      skipScopeCheck: true,
+    });
+    await fetch("https://gmail.googleapis.com/gmail/v1/users/me/stop", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch {
+    // Ignore if tokens are already invalid.
+  }
+
   const { error } = await admin
     .from("gmail_connections")
     .delete()
@@ -193,6 +205,91 @@ export async function deleteGmailConnection(userId: string) {
   if (error && !isMissingGmailTableError(error.message)) {
     throw new Error(`Failed to remove Gmail connection: ${error.message}`);
   }
+}
+
+export type GmailConnectionRecord = {
+  userId: string;
+  googleEmail: string | null;
+  historyId: string | null;
+  watchExpiration: string | null;
+};
+
+export async function getGmailConnectionByGoogleEmail(
+  googleEmail: string
+): Promise<GmailConnectionRecord | null> {
+  const admin = createAdminClient();
+  const normalized = googleEmail.trim().toLowerCase();
+
+  const { data, error } = await admin
+    .from("gmail_connections")
+    .select("user_id, google_email, history_id, watch_expiration")
+    .ilike("google_email", normalized)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingGmailTableError(error.message)) return null;
+    throw new Error(`Failed to read Gmail connection: ${error.message}`);
+  }
+
+  if (!data) return null;
+
+  return {
+    userId: data.user_id,
+    googleEmail: data.google_email,
+    historyId: data.history_id ?? null,
+    watchExpiration: data.watch_expiration ?? null,
+  };
+}
+
+export async function updateGmailWatchState(
+  userId: string,
+  input: {
+    historyId?: string | null;
+    watchExpiration?: string | null;
+  }
+) {
+  const admin = createAdminClient();
+  const patch: Record<string, string | null> = {};
+
+  if ("historyId" in input) {
+    patch.history_id = input.historyId ?? null;
+  }
+  if ("watchExpiration" in input) {
+    patch.watch_expiration = input.watchExpiration ?? null;
+  }
+
+  if (Object.keys(patch).length === 0) return;
+
+  const { error } = await admin
+    .from("gmail_connections")
+    .update(patch)
+    .eq("user_id", userId);
+
+  if (error) {
+    if (isMissingGmailTableError(error.message)) {
+      throw new Error(
+        "Database setup required. Run supabase/migrations/005_gmail_watch.sql."
+      );
+    }
+    throw new Error(`Failed to update Gmail watch state: ${error.message}`);
+  }
+}
+
+export async function listGmailConnectionsNeedingWatchRenewal(withinMs = 24 * 60 * 60 * 1000) {
+  const admin = createAdminClient();
+  const cutoff = new Date(Date.now() + withinMs).toISOString();
+
+  const { data, error } = await admin
+    .from("gmail_connections")
+    .select("user_id, watch_expiration")
+    .or(`watch_expiration.is.null,watch_expiration.lt.${cutoff}`);
+
+  if (error) {
+    if (isMissingGmailTableError(error.message)) return [];
+    throw new Error(`Failed to list Gmail connections: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => row.user_id as string);
 }
 
 async function refreshAccessToken(refreshToken: string) {
@@ -326,6 +423,7 @@ export async function fetchGmailProfile(accessToken: string) {
     emailAddress?: string;
     messagesTotal?: number;
     threadsTotal?: number;
+    historyId?: string;
     error?: { message?: string };
   };
 
