@@ -31,6 +31,7 @@ export type MailMindAgentInput = {
   chatThreadId?: string | null;
   pendingDraftId?: string | null;
   feedbackText?: string | null;
+  gmailMessageId?: string | null;
   traceContext?: AgentTraceContext;
 };
 
@@ -59,6 +60,7 @@ export function redactAgentInput(input: MailMindAgentInput) {
     chatThreadId: input.chatThreadId ?? null,
     pendingDraftId: input.pendingDraftId ?? null,
     feedbackText: input.feedbackText ?? null,
+    gmailMessageId: input.gmailMessageId ?? null,
     traceContext: input.traceContext,
     accessToken: "[REDACTED]",
   };

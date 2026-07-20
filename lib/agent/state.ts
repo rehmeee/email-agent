@@ -8,7 +8,8 @@ export type AgentEventType =
   | "gmail_connected"
   | "chat"
   | "approve"
-  | "feedback";
+  | "feedback"
+  | "new_email";
 
 export type SentMailSampleState = {
   id: string;

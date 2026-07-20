@@ -75,6 +75,32 @@ async function runMailMindAgentImpl(
     };
   }
 
+  if (eventType === "new_email") {
+    if (!input.gmailMessageId) {
+      throw new Error("gmailMessageId is required for new_email");
+    }
+
+    const result = await invokeMainGraph({
+      eventType,
+      userId: input.userId,
+      accessToken: input.accessToken,
+      gmailEmail: input.gmailEmail,
+      messages: [
+        new HumanMessage(
+          `New inbox message id: ${input.gmailMessageId}. Read it, decide if it needs a reply, and call create_draft when appropriate (no approval step).`
+        ),
+      ],
+    });
+
+    return {
+      reply: result.reply || "Triage complete.",
+      gmailDraftCreated: Boolean(
+        result.resultMeta?.gmailDraftCreated || result.gmailDraftId
+      ),
+      pendingDraftId: null,
+    };
+  }
+
   if (eventType === "approve") {
     if (!input.pendingDraftId) {
       throw new Error("pendingDraftId is required for approve");
