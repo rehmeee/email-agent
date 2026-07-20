@@ -11,10 +11,17 @@ import {
 } from "react";
 import { MailMindRobot } from "@/components/dashboard/mailmind-robot";
 
+type PendingDraftPreview = {
+  to: string;
+  subject: string;
+  body: string;
+};
+
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   pendingDraftId?: string | null;
+  pendingDraft?: PendingDraftPreview | null;
   draftStatus?: "pending" | "approved" | "rejected";
 };
 
@@ -67,10 +74,31 @@ function AgentThinkingPanel({ message }: { message: string }) {
   );
 }
 
+function DraftPreviewCard({ draft }: { draft: PendingDraftPreview }) {
+  return (
+    <div className="mt-3 space-y-2 rounded-xl border border-white/10 bg-black/25 px-4 py-3">
+      <div className="space-y-1 text-sm">
+        <p className="text-zinc-400">
+          <span className="font-medium text-zinc-300">To:</span> {draft.to}
+        </p>
+        <p className="text-zinc-400">
+          <span className="font-medium text-zinc-300">Subject:</span> {draft.subject}
+        </p>
+      </div>
+      <div className="border-t border-white/10 pt-3">
+        <p className="whitespace-pre-wrap text-[15px] leading-7 text-zinc-100">
+          {draft.body}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function AssistantMessage({
   content,
   animate,
   pendingDraftId,
+  pendingDraft,
   draftStatus,
   isRejecting,
   rejectFeedback,
@@ -84,6 +112,7 @@ function AssistantMessage({
   content: string;
   animate?: boolean;
   pendingDraftId?: string | null;
+  pendingDraft?: PendingDraftPreview | null;
   draftStatus?: "pending" | "approved" | "rejected";
   isRejecting?: boolean;
   rejectFeedback?: string;
@@ -102,10 +131,11 @@ function AssistantMessage({
           MailMind
         </p>
         <p className="whitespace-pre-wrap">{content}</p>
+        {pendingDraft ? <DraftPreviewCard draft={pendingDraft} /> : null}
         {pendingDraftId && draftStatus === "pending" && !isRejecting ? (
           <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/[0.08] px-3 py-2">
             <p className="mr-auto text-xs text-amber-100/90">
-              Draft ready for review — approve to save in Gmail, or reject with feedback.
+              Approve to save in Gmail, or reject with feedback.
             </p>
             <button
               type="button"
@@ -162,7 +192,7 @@ function AssistantMessage({
           <p className="mt-2 text-xs text-emerald-300/90">Draft approved and saved to Gmail.</p>
         ) : null}
         {pendingDraftId && draftStatus === "rejected" ? (
-          <p className="mt-2 text-xs text-zinc-400">Draft rejected — persona updated from your feedback.</p>
+          <p className="mt-2 text-xs text-zinc-400">Draft rejected.</p>
         ) : null}
       </div>
     </div>
@@ -332,6 +362,7 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
         threadId?: string;
         threadTitle?: string;
         pendingDraftId?: string | null;
+        pendingDraft?: PendingDraftPreview | null;
         error?: string;
       };
 
@@ -346,6 +377,7 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
           role: "assistant",
           content: payload.reply ?? "No response returned.",
           pendingDraftId: payload.pendingDraftId ?? null,
+          pendingDraft: payload.pendingDraft ?? null,
           draftStatus: payload.pendingDraftId ? "pending" : undefined,
         },
       ]);
@@ -404,7 +436,8 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
     draftId: string,
     feedback: string,
     followUp: string,
-    nextPendingDraftId?: string | null
+    nextPendingDraftId?: string | null,
+    pendingDraft?: PendingDraftPreview | null
   ) {
     setMessages((current) => {
       const updated = current.map((message) =>
@@ -423,6 +456,7 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
           role: "assistant" as const,
           content: followUp,
           pendingDraftId: nextPendingDraftId ?? null,
+          pendingDraft: pendingDraft ?? null,
           draftStatus: nextPendingDraftId ? ("pending" as const) : undefined,
         },
       ];
@@ -500,6 +534,7 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
       const payload = (await response.json()) as {
         reply?: string;
         pendingDraftId?: string | null;
+        pendingDraft?: PendingDraftPreview | null;
         error?: string;
       };
 
@@ -511,8 +546,9 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
         draftId,
         trimmed,
         payload.reply ??
-          "Feedback saved. Here is an improved draft with your new instructions.",
-        payload.pendingDraftId ?? null
+          "Got it — I'll keep this in mind. Here's the updated draft.",
+        payload.pendingDraftId ?? null,
+        payload.pendingDraft ?? null
       );
 
       setRejectingDraftId(null);
@@ -732,6 +768,7 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
                       content={message.content}
                       animate={speakingIndex === index}
                       pendingDraftId={message.pendingDraftId}
+                      pendingDraft={message.pendingDraft}
                       draftStatus={message.draftStatus}
                       isRejecting={
                         Boolean(

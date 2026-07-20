@@ -160,7 +160,6 @@ async function applyFeedback(state: MailMindStateType) {
     (state.persona as PersonaProfile | null) ?? emptyPersonaProfile()
   );
 
-  let changeNote = "Updated writing guidance from your feedback.";
   let nextPersona = currentPersona;
 
   try {
@@ -186,7 +185,6 @@ async function applyFeedback(state: MailMindStateType) {
         ...merged.feedbackSummary.dont.slice(0, 3),
       ]),
     });
-    changeNote = merged.changeNote;
   } catch (error) {
     // Never fail the reject UX on provider/schema issues — merge safely.
     const summary = fallbackSummaryFromFeedback(
@@ -198,14 +196,13 @@ async function applyFeedback(state: MailMindStateType) {
       feedbackSummary: summary,
       avoid: uniqueLines([...currentPersona.avoid, ...summary.dont.slice(0, 2)]),
     });
-    changeNote = `Saved your feedback locally (${errorMessage(error).slice(0, 80)}).`;
   }
 
   return {
     persona: nextPersona,
-    reply: `Got it — I updated your writing persona. ${changeNote}`,
+    reply: "I’ll keep this in mind for next time.",
     resultMeta: {
-      personaFeedbackSummary: changeNote,
+      personaFeedbackSummary: "Feedback merged into private writing guidance.",
       feedbackSummary: nextPersona.feedbackSummary,
     },
   };
@@ -219,8 +216,7 @@ async function savePersona(state: MailMindStateType) {
 
   return {
     reply:
-      state.reply ||
-      "Feedback saved. Your writing persona summary was updated for future drafts.",
+      state.reply || "I’ll keep this in mind for next time.",
     resultMeta: { feedbackSaved: true, personaUpdated: true },
   };
 }

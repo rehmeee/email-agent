@@ -4,6 +4,7 @@ import { MailMindState, type MailMindStateType } from "@/lib/agent/state";
 import { createEmailSubgraph } from "@/lib/agent/subgraphs/email";
 import { createFeedbackSubgraph } from "@/lib/agent/subgraphs/feedback";
 import { createPersonaSubgraph } from "@/lib/agent/subgraphs/persona";
+import { getMailMindMemoryStore } from "@/lib/memory/store";
 
 function routeByEvent(state: MailMindStateType) {
   switch (state.eventType) {
@@ -44,7 +45,8 @@ function buildMainGraph() {
     .addEdge("persona_agent", END)
     .addEdge("email_agent", END)
     .addEdge("feedback_agent", END)
-    .compile();
+    // InMemoryStore caches user memory in-process; Supabase stays source of truth.
+    .compile({ store: getMailMindMemoryStore() });
 }
 
 export function getMainGraph() {
@@ -57,6 +59,7 @@ export function getMainGraph() {
 export async function invokeMainGraph(input: Partial<MailMindStateType>) {
   // Drop cached graph in dev when this module reloads so node changes apply.
   const graph = getMainGraph();
+
   return graph.invoke(input, {
     recursionLimit: 40,
     runName: `MailMind:${input.eventType ?? "unknown"}`,

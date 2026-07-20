@@ -14,7 +14,8 @@ import {
 } from "@/lib/agent/tools/gmail";
 import { hasToolCalls, runToolCalls } from "@/lib/agent/tools/run-tools";
 import { getPendingDraft, markPendingDraftApproved } from "@/lib/drafts/db";
-import { formatMemoryForPrompt, getAgentMemory } from "@/lib/memory/db";
+import { formatMemoryForPrompt } from "@/lib/memory/db";
+import { getAgentMemoryCached } from "@/lib/memory/store";
 import { getPersonaProfile } from "@/lib/persona/db";
 import {
   emptyPersonaProfile,
@@ -51,11 +52,11 @@ function extractReplyText(messages: BaseMessage[]) {
 }
 
 async function loadPersonaMemory(state: MailMindStateType) {
-  const [personaRecord, agentMemory] = await Promise.all([
+  const [personaRecord, memoryLoad] = await Promise.all([
     getPersonaProfile(state.userId),
     state.agentMemory
-      ? Promise.resolve(state.agentMemory)
-      : getAgentMemory(state.userId),
+      ? Promise.resolve({ memory: state.agentMemory, source: "state" as const })
+      : getAgentMemoryCached(state.userId),
   ]);
 
   let pendingDraft = state.pendingDraft ?? null;
@@ -67,8 +68,11 @@ async function loadPersonaMemory(state: MailMindStateType) {
     persona: normalizePersonaProfile(
       personaRecord?.profile ?? emptyPersonaProfile()
     ),
-    agentMemory,
+    agentMemory: memoryLoad.memory,
     pendingDraft,
+    resultMeta: {
+      memorySource: "source" in memoryLoad ? memoryLoad.source : "state",
+    },
   };
 }
 
