@@ -11,18 +11,22 @@ import {
 } from "react";
 import { MailMindRobot } from "@/components/dashboard/mailmind-robot";
 
-type PendingDraftPreview = {
+type DraftPreview = {
   to: string;
   subject: string;
   body: string;
+  gmailThreadId?: string;
+  inReplyTo?: string;
+  references?: string;
 };
 
 type ChatMessage = {
+  id?: string;
   role: "user" | "assistant";
   content: string;
-  pendingDraftId?: string | null;
-  pendingDraft?: PendingDraftPreview | null;
-  draftStatus?: "pending" | "approved" | "rejected";
+  messageId?: string | null;
+  draft?: DraftPreview | null;
+  draftStatus?: "pending" | "accepted" | "revised" | null;
 };
 
 type ChatThread = {
@@ -74,7 +78,7 @@ function AgentThinkingPanel({ message }: { message: string }) {
   );
 }
 
-function DraftPreviewCard({ draft }: { draft: PendingDraftPreview }) {
+function DraftPreviewCard({ draft }: { draft: DraftPreview }) {
   return (
     <div className="mt-3 space-y-2 rounded-xl border border-white/10 bg-black/25 px-4 py-3">
       <div className="space-y-1 text-sm">
@@ -97,30 +101,30 @@ function DraftPreviewCard({ draft }: { draft: PendingDraftPreview }) {
 function AssistantMessage({
   content,
   animate,
-  pendingDraftId,
-  pendingDraft,
+  messageKey,
+  draft,
   draftStatus,
-  isRejecting,
-  rejectFeedback,
-  onRejectFeedbackChange,
-  onStartReject,
-  onCancelReject,
-  onSubmitReject,
-  onApprove,
+  isGivingFeedback,
+  feedbackText,
+  onFeedbackTextChange,
+  onStartFeedback,
+  onCancelFeedback,
+  onSubmitFeedback,
+  onAccept,
   isActing,
 }: {
   content: string;
   animate?: boolean;
-  pendingDraftId?: string | null;
-  pendingDraft?: PendingDraftPreview | null;
-  draftStatus?: "pending" | "approved" | "rejected";
-  isRejecting?: boolean;
-  rejectFeedback?: string;
-  onRejectFeedbackChange?: (value: string) => void;
-  onStartReject?: (draftId: string) => void;
-  onCancelReject?: () => void;
-  onSubmitReject?: (draftId: string) => void;
-  onApprove?: (draftId: string) => void;
+  messageKey: string;
+  draft?: DraftPreview | null;
+  draftStatus?: "pending" | "accepted" | "revised" | null;
+  isGivingFeedback?: boolean;
+  feedbackText?: string;
+  onFeedbackTextChange?: (value: string) => void;
+  onStartFeedback?: (messageKey: string) => void;
+  onCancelFeedback?: () => void;
+  onSubmitFeedback?: (messageKey: string) => void;
+  onAccept?: (messageKey: string) => void;
   isActing?: boolean;
 }) {
   return (
@@ -131,39 +135,40 @@ function AssistantMessage({
           MailMind
         </p>
         <p className="whitespace-pre-wrap">{content}</p>
-        {pendingDraft ? <DraftPreviewCard draft={pendingDraft} /> : null}
-        {pendingDraftId && draftStatus === "pending" && !isRejecting ? (
-          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/[0.08] px-3 py-2">
-            <p className="mr-auto text-xs text-amber-100/90">
-              Approve to save in Gmail, or reject with feedback.
-            </p>
+        {draft ? <DraftPreviewCard draft={draft} /> : null}
+        {draft && draftStatus === "pending" && !isGivingFeedback ? (
+          <div className="mt-3 flex items-center gap-2">
             <button
               type="button"
               disabled={isActing}
-              onClick={() => onApprove?.(pendingDraftId)}
-              className="rounded-full bg-emerald-500/90 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-emerald-400 disabled:opacity-50"
+              aria-label="Thumbs up — save draft to Gmail"
+              title="Save to Gmail Drafts"
+              onClick={() => onAccept?.(messageKey)}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/15 text-base transition hover:bg-emerald-500/25 disabled:opacity-50"
             >
-              Approve
+              👍
             </button>
             <button
               type="button"
               disabled={isActing}
-              onClick={() => onStartReject?.(pendingDraftId)}
-              className="rounded-full border border-white/15 bg-white/[0.06] px-3 py-1 text-[11px] font-semibold text-zinc-200 transition hover:bg-white/[0.1] disabled:opacity-50"
+              aria-label="Thumbs down — give feedback"
+              title="Give feedback"
+              onClick={() => onStartFeedback?.(messageKey)}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-base transition hover:bg-white/[0.12] disabled:opacity-50"
             >
-              Reject
+              👎
             </button>
           </div>
         ) : null}
-        {pendingDraftId && draftStatus === "pending" && isRejecting ? (
+        {draft && draftStatus === "pending" && isGivingFeedback ? (
           <div className="mt-3 space-y-2 rounded-xl border border-rose-500/25 bg-rose-500/[0.08] px-3 py-3">
             <p className="text-xs font-medium text-rose-100/90">
-              What should MailMind change? Your feedback updates the writing persona, then a new draft is proposed here.
+              What should MailMind change? Feedback updates your writing persona, then a new draft is proposed.
             </p>
             <textarea
               rows={3}
-              value={rejectFeedback ?? ""}
-              onChange={(event) => onRejectFeedbackChange?.(event.target.value)}
+              value={feedbackText ?? ""}
+              onChange={(event) => onFeedbackTextChange?.(event.target.value)}
               placeholder="e.g. Too formal — make it shorter and friendlier"
               disabled={isActing}
               className="w-full resize-y rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-rose-400/40 disabled:opacity-50"
@@ -171,8 +176,8 @@ function AssistantMessage({
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                disabled={isActing || !(rejectFeedback ?? "").trim()}
-                onClick={() => onSubmitReject?.(pendingDraftId)}
+                disabled={isActing || !(feedbackText ?? "").trim()}
+                onClick={() => onSubmitFeedback?.(messageKey)}
                 className="rounded-full bg-rose-500/90 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-rose-400 disabled:opacity-50"
               >
                 {isActing ? "Improving draft..." : "Submit feedback"}
@@ -180,7 +185,7 @@ function AssistantMessage({
               <button
                 type="button"
                 disabled={isActing}
-                onClick={() => onCancelReject?.()}
+                onClick={() => onCancelFeedback?.()}
                 className="rounded-full border border-white/15 bg-white/[0.06] px-3 py-1 text-[11px] font-semibold text-zinc-200 transition hover:bg-white/[0.1] disabled:opacity-50"
               >
                 Cancel
@@ -188,11 +193,10 @@ function AssistantMessage({
             </div>
           </div>
         ) : null}
-        {pendingDraftId && draftStatus === "approved" ? (
-          <p className="mt-2 text-xs text-emerald-300/90">Draft approved and saved to Gmail.</p>
-        ) : null}
-        {pendingDraftId && draftStatus === "rejected" ? (
-          <p className="mt-2 text-xs text-zinc-400">Draft rejected.</p>
+        {draft && draftStatus === "accepted" ? (
+          <p className="mt-2 text-xs text-emerald-300/90">
+            Draft accepted and saved to Gmail → Drafts.
+          </p>
         ) : null}
       </div>
     </div>
@@ -212,8 +216,10 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
   const [speakingIndex, setSpeakingIndex] = useState<number | null>(null);
   const [isActingOnDraft, setIsActingOnDraft] = useState(false);
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
-  const [rejectingDraftId, setRejectingDraftId] = useState<string | null>(null);
-  const [rejectFeedback, setRejectFeedback] = useState("");
+  const [feedbackMessageKey, setFeedbackMessageKey] = useState<string | null>(
+    null
+  );
+  const [feedbackText, setFeedbackText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -234,7 +240,14 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
       try {
         const response = await fetch(`/api/chat/threads/${threadId}`);
         const payload = (await response.json()) as {
-          messages?: ChatMessage[];
+          messages?: Array<{
+            id?: string;
+            role: "user" | "assistant";
+            content: string;
+            draft?: DraftPreview | null;
+            draftStatus?: "pending" | "accepted" | "revised" | null;
+            messageId?: string | null;
+          }>;
           error?: string;
         };
 
@@ -242,7 +255,16 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
           throw new Error(payload.error ?? "Failed to load messages");
         }
 
-        setMessages(payload.messages ?? []);
+        setMessages(
+          (payload.messages ?? []).map((item) => ({
+            id: item.id ?? item.messageId ?? undefined,
+            role: item.role,
+            content: item.content,
+            messageId: item.messageId ?? item.id ?? null,
+            draft: item.draft ?? null,
+            draftStatus: item.draftStatus ?? null,
+          }))
+        );
         setActiveThreadId(threadId);
       } catch (loadError) {
         const message =
@@ -361,8 +383,9 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
         reply?: string;
         threadId?: string;
         threadTitle?: string;
-        pendingDraftId?: string | null;
-        pendingDraft?: PendingDraftPreview | null;
+        draft?: DraftPreview | null;
+        messageId?: string | null;
+        draftStatus?: "pending" | "accepted" | "revised" | null;
         error?: string;
       };
 
@@ -376,9 +399,9 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
         {
           role: "assistant",
           content: payload.reply ?? "No response returned.",
-          pendingDraftId: payload.pendingDraftId ?? null,
-          pendingDraft: payload.pendingDraft ?? null,
-          draftStatus: payload.pendingDraftId ? "pending" : undefined,
+          messageId: payload.messageId ?? null,
+          draft: payload.draft ?? null,
+          draftStatus: payload.draftStatus ?? (payload.draft ? "pending" : null),
         },
       ]);
       setSpeakingIndex(assistantIndex);
@@ -417,62 +440,35 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
     await sendMessage(input);
   }
 
-  function updateDraftStatus(
-    draftId: string,
-    status: "approved" | "rejected",
-    followUp: string
-  ) {
-    setMessages((current) => [
-      ...current.map((message) =>
-        message.pendingDraftId === draftId
-          ? { ...message, draftStatus: status }
-          : message
-      ),
-      { role: "assistant", content: followUp },
-    ]);
+  function messageKeyFor(message: ChatMessage, index: number) {
+    return message.messageId ?? message.id ?? `idx-${index}`;
   }
 
-  function applyRejectResult(
-    draftId: string,
-    feedback: string,
-    followUp: string,
-    nextPendingDraftId?: string | null,
-    pendingDraft?: PendingDraftPreview | null
-  ) {
-    setMessages((current) => {
-      const updated = current.map((message) =>
-        message.pendingDraftId === draftId
-          ? { ...message, draftStatus: "rejected" as const }
-          : message
-      );
-
-      return [
-        ...updated,
-        {
-          role: "user" as const,
-          content: `Reject feedback: ${feedback}`,
-        },
-        {
-          role: "assistant" as const,
-          content: followUp,
-          pendingDraftId: nextPendingDraftId ?? null,
-          pendingDraft: pendingDraft ?? null,
-          draftStatus: nextPendingDraftId ? ("pending" as const) : undefined,
-        },
-      ];
-    });
+  function findMessageByKey(messageKey: string) {
+    return messages.find(
+      (message, index) => messageKeyFor(message, index) === messageKey
+    );
   }
 
-  async function handleApproveDraft(draftId: string) {
+  async function handleAcceptDraft(messageKey: string) {
     if (isActingOnDraft) return;
-    setRejectingDraftId(null);
-    setRejectFeedback("");
+    const target = findMessageByKey(messageKey);
+    if (!target?.draft) return;
+
+    setFeedbackMessageKey(null);
+    setFeedbackText("");
     setIsActingOnDraft(true);
     setError(null);
 
     try {
-      const response = await fetch(`/api/agent/drafts/${draftId}/approve`, {
+      const response = await fetch("/api/agent/drafts/accept", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messageId: target.messageId,
+          threadId: activeThreadId,
+          draft: target.draft,
+        }),
       });
       const payload = (await response.json()) as {
         reply?: string;
@@ -480,84 +476,117 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
       };
 
       if (!response.ok) {
-        throw new Error(payload.error ?? "Failed to approve draft");
+        throw new Error(payload.error ?? "Failed to accept draft");
       }
 
-      updateDraftStatus(
-        draftId,
-        "approved",
-        payload.reply ?? "Draft approved and saved to Gmail."
-      );
+      setMessages((current) => [
+        ...current.map((message, index) =>
+          messageKeyFor(message, index) === messageKey
+            ? { ...message, draftStatus: "accepted" as const }
+            : message
+        ),
+        {
+          role: "assistant",
+          content: payload.reply ?? "Draft saved to Gmail → Drafts.",
+        },
+      ]);
       onDraftsMaybeCreated?.();
-    } catch (approveError) {
+    } catch (acceptError) {
       setError(
-        approveError instanceof Error
-          ? approveError.message
-          : "Failed to approve draft"
+        acceptError instanceof Error
+          ? acceptError.message
+          : "Failed to accept draft"
       );
     } finally {
       setIsActingOnDraft(false);
     }
   }
 
-  function handleStartReject(draftId: string) {
+  function handleStartFeedback(messageKey: string) {
     if (isActingOnDraft) return;
     setError(null);
-    setRejectingDraftId(draftId);
-    setRejectFeedback("");
+    setFeedbackMessageKey(messageKey);
+    setFeedbackText("");
   }
 
-  function handleCancelReject() {
+  function handleCancelFeedback() {
     if (isActingOnDraft) return;
-    setRejectingDraftId(null);
-    setRejectFeedback("");
+    setFeedbackMessageKey(null);
+    setFeedbackText("");
   }
 
-  async function handleSubmitReject(draftId: string) {
+  async function handleSubmitFeedback(messageKey: string) {
     if (isActingOnDraft) return;
 
-    const trimmed = rejectFeedback.trim();
+    const trimmed = feedbackText.trim();
     if (!trimmed) {
-      setError("Feedback is required to reject a draft.");
+      setError("Feedback is required.");
       return;
     }
+
+    const target = findMessageByKey(messageKey);
+    if (!target?.draft) return;
 
     setIsActingOnDraft(true);
     setError(null);
 
     try {
-      const response = await fetch(`/api/agent/drafts/${draftId}/reject`, {
+      const response = await fetch("/api/agent/drafts/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ feedback: trimmed }),
+        body: JSON.stringify({
+          messageId: target.messageId,
+          threadId: activeThreadId,
+          feedback: trimmed,
+          draft: target.draft,
+        }),
       });
       const payload = (await response.json()) as {
         reply?: string;
-        pendingDraftId?: string | null;
-        pendingDraft?: PendingDraftPreview | null;
+        draft?: DraftPreview | null;
+        messageId?: string | null;
+        draftStatus?: "pending" | null;
         error?: string;
       };
 
       if (!response.ok) {
-        throw new Error(payload.error ?? "Failed to reject draft");
+        throw new Error(payload.error ?? "Failed to submit feedback");
       }
 
-      applyRejectResult(
-        draftId,
-        trimmed,
-        payload.reply ??
-          "Got it — I'll keep this in mind. Here's the updated draft.",
-        payload.pendingDraftId ?? null,
-        payload.pendingDraft ?? null
-      );
+      setMessages((current) => {
+        const updated = current.map((message, index) =>
+          messageKeyFor(message, index) === messageKey
+            ? { ...message, draftStatus: "revised" as const }
+            : message
+        );
 
-      setRejectingDraftId(null);
-      setRejectFeedback("");
-    } catch (rejectError) {
+        return [
+          ...updated,
+          {
+            role: "user" as const,
+            content: `Draft feedback: ${trimmed}`,
+          },
+          {
+            role: "assistant" as const,
+            content:
+              payload.reply ??
+              "Got it — I'll keep this in mind. Here's the updated draft.",
+            messageId: payload.messageId ?? null,
+            draft: payload.draft ?? null,
+            draftStatus: payload.draft
+              ? ("pending" as const)
+              : payload.draftStatus ?? null,
+          },
+        ];
+      });
+
+      setFeedbackMessageKey(null);
+      setFeedbackText("");
+    } catch (feedbackError) {
       setError(
-        rejectError instanceof Error
-          ? rejectError.message
-          : "Failed to reject draft"
+        feedbackError instanceof Error
+          ? feedbackError.message
+          : "Failed to submit feedback"
       );
     } finally {
       setIsActingOnDraft(false);
@@ -767,21 +796,18 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
                       key={`${message.role}-${index}`}
                       content={message.content}
                       animate={speakingIndex === index}
-                      pendingDraftId={message.pendingDraftId}
-                      pendingDraft={message.pendingDraft}
+                      messageKey={messageKeyFor(message, index)}
+                      draft={message.draft}
                       draftStatus={message.draftStatus}
-                      isRejecting={
-                        Boolean(
-                          message.pendingDraftId &&
-                            message.pendingDraftId === rejectingDraftId
-                        )
+                      isGivingFeedback={
+                        feedbackMessageKey === messageKeyFor(message, index)
                       }
-                      rejectFeedback={rejectFeedback}
-                      onRejectFeedbackChange={setRejectFeedback}
-                      onStartReject={handleStartReject}
-                      onCancelReject={handleCancelReject}
-                      onSubmitReject={handleSubmitReject}
-                      onApprove={handleApproveDraft}
+                      feedbackText={feedbackText}
+                      onFeedbackTextChange={setFeedbackText}
+                      onStartFeedback={handleStartFeedback}
+                      onCancelFeedback={handleCancelFeedback}
+                      onSubmitFeedback={handleSubmitFeedback}
+                      onAccept={handleAcceptDraft}
                       isActing={isActingOnDraft}
                     />
                   )

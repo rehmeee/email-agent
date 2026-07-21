@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { ChatDraftMetadata } from "@/lib/drafts/preview";
 
 export type ChatThread = {
   id: string;
@@ -12,6 +13,7 @@ export type ChatMessageRecord = {
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  metadata?: ChatDraftMetadata | null;
 };
 
 function isMissingChatTableError(message: string) {
@@ -27,6 +29,32 @@ function buildTitleFromMessage(message: string) {
   const trimmed = message.trim().replace(/\s+/g, " ");
   if (!trimmed) return "New chat";
   return trimmed.length > 48 ? `${trimmed.slice(0, 48)}…` : trimmed;
+}
+
+function parseMetadata(raw: unknown): ChatDraftMetadata | null {
+  if (!raw || typeof raw !== "object") return null;
+  const meta = raw as Partial<ChatDraftMetadata>;
+  if (!meta.draft || typeof meta.draft !== "object") return null;
+  if (!meta.draft.to || !meta.draft.subject || !meta.draft.body) return null;
+  if (
+    meta.draftStatus !== "pending" &&
+    meta.draftStatus !== "accepted" &&
+    meta.draftStatus !== "revised"
+  ) {
+    return null;
+  }
+  return {
+    draft: {
+      to: meta.draft.to,
+      subject: meta.draft.subject,
+      body: meta.draft.body,
+      gmailThreadId: meta.draft.gmailThreadId,
+      inReplyTo: meta.draft.inReplyTo,
+      references: meta.draft.references,
+    },
+    draftStatus: meta.draftStatus,
+    gmailDraftId: meta.gmailDraftId ?? null,
+  };
 }
 
 export async function listChatThreads(userId: string): Promise<ChatThread[]> {
@@ -75,11 +103,30 @@ export async function getChatThreadMessages(
 
   const { data, error } = await admin
     .from("chat_messages")
-    .select("id, role, content, created_at")
+    .select("id, role, content, created_at, metadata")
     .eq("thread_id", threadId)
     .order("created_at", { ascending: true });
 
   if (error) {
+    // Older DBs without metadata column — fall back.
+    if (error.message.includes("metadata")) {
+      const fallback = await admin
+        .from("chat_messages")
+        .select("id, role, content, created_at")
+        .eq("thread_id", threadId)
+        .order("created_at", { ascending: true });
+      if (fallback.error) {
+        if (isMissingChatTableError(fallback.error.message)) return [];
+        throw new Error(`Failed to read chat messages: ${fallback.error.message}`);
+      }
+      return (fallback.data ?? []).map((row) => ({
+        id: row.id,
+        role: row.role as "user" | "assistant",
+        content: row.content,
+        createdAt: row.created_at,
+        metadata: null,
+      }));
+    }
     if (isMissingChatTableError(error.message)) return [];
     throw new Error(`Failed to read chat messages: ${error.message}`);
   }
@@ -89,7 +136,26 @@ export async function getChatThreadMessages(
     role: row.role as "user" | "assistant",
     content: row.content,
     createdAt: row.created_at,
+    metadata: parseMetadata(row.metadata),
   }));
+}
+
+export async function findLatestPendingDraftMessage(
+  userId: string,
+  threadId: string
+) {
+  const messages = await getChatThreadMessages(userId, threadId);
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (
+      message.role === "assistant" &&
+      message.metadata?.draftStatus === "pending" &&
+      message.metadata.draft
+    ) {
+      return message;
+    }
+  }
+  return null;
 }
 
 export async function createChatThread(userId: string, title = "New chat") {
@@ -121,17 +187,48 @@ export async function createChatThread(userId: string, title = "New chat") {
 export async function addChatMessage(
   threadId: string,
   role: "user" | "assistant",
-  content: string
+  content: string,
+  metadata?: ChatDraftMetadata | null
 ) {
   const admin = createAdminClient();
 
-  const { error } = await admin.from("chat_messages").insert({
+  const row: Record<string, unknown> = {
     thread_id: threadId,
     role,
     content,
-  });
+  };
+  if (metadata) {
+    row.metadata = metadata;
+  }
+
+  const { data, error } = await admin
+    .from("chat_messages")
+    .insert(row)
+    .select("id, role, content, created_at, metadata")
+    .single();
 
   if (error) {
+    if (error.message.includes("metadata") && metadata) {
+      const fallback = await admin
+        .from("chat_messages")
+        .insert({ thread_id: threadId, role, content })
+        .select("id, role, content, created_at")
+        .single();
+      if (fallback.error) {
+        throw new Error(`Failed to save chat message: ${fallback.error.message}`);
+      }
+      await admin
+        .from("chat_threads")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", threadId);
+      return {
+        id: fallback.data.id,
+        role: fallback.data.role as "user" | "assistant",
+        content: fallback.data.content,
+        createdAt: fallback.data.created_at,
+        metadata: null,
+      } satisfies ChatMessageRecord;
+    }
     if (isMissingChatTableError(error.message)) {
       throw new Error(
         "Database setup required. Run supabase/migrations/002_chat_threads.sql in the Supabase SQL Editor."
@@ -144,6 +241,52 @@ export async function addChatMessage(
     .from("chat_threads")
     .update({ updated_at: new Date().toISOString() })
     .eq("id", threadId);
+
+  return {
+    id: data.id,
+    role: data.role as "user" | "assistant",
+    content: data.content,
+    createdAt: data.created_at,
+    metadata: parseMetadata(data.metadata),
+  } satisfies ChatMessageRecord;
+}
+
+export async function updateChatMessageMetadata(
+  userId: string,
+  messageId: string,
+  metadata: ChatDraftMetadata
+) {
+  const admin = createAdminClient();
+
+  const { data: message, error: loadError } = await admin
+    .from("chat_messages")
+    .select("id, thread_id")
+    .eq("id", messageId)
+    .maybeSingle();
+
+  if (loadError || !message) {
+    throw new Error("Chat message not found.");
+  }
+
+  const { data: thread, error: threadError } = await admin
+    .from("chat_threads")
+    .select("id")
+    .eq("id", message.thread_id)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (threadError || !thread) {
+    throw new Error("Chat message not found.");
+  }
+
+  const { error } = await admin
+    .from("chat_messages")
+    .update({ metadata })
+    .eq("id", messageId);
+
+  if (error) {
+    throw new Error(`Failed to update message metadata: ${error.message}`);
+  }
 }
 
 export async function deleteChatThread(userId: string, threadId: string) {

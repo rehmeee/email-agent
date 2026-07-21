@@ -11,7 +11,6 @@ function routeByEvent(state: MailMindStateType) {
     case "gmail_connected":
       return "persona_agent";
     case "chat":
-    case "approve":
     case "new_email":
       return "email_agent";
     case "feedback":

@@ -4,8 +4,10 @@ import { registerGmailWatchForUser } from "@/lib/gmail/watch";
 
 function isAuthorized(request: Request) {
   const secret = process.env.CRON_SECRET?.trim();
+  // Local/dev without CRON_SECRET: allow manual curls.
   if (!secret) return process.env.NODE_ENV !== "production";
 
+  // Vercel Cron sends: Authorization: Bearer <CRON_SECRET>
   const header = request.headers.get("authorization");
   return header === `Bearer ${secret}`;
 }

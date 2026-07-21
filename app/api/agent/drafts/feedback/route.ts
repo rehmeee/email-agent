@@ -1,29 +1,31 @@
 import { NextResponse } from "next/server";
 import { runMailMindAgent } from "@/lib/agent/graph";
-import { addChatMessage } from "@/lib/chat/threads";
-import { getPendingDraft, markPendingDraftRejected } from "@/lib/drafts/db";
+import { addChatMessage, updateChatMessageMetadata } from "@/lib/chat/threads";
 import {
   buildDraftReviewReply,
   formatDraftPreviewBlock,
-  type PendingDraftPreview,
+  type DraftPreview,
 } from "@/lib/drafts/preview";
 import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 import { createClient } from "@/lib/supabase/server";
 
-type RouteContext = {
-  params: Promise<{ id: string }>;
+type FeedbackBody = {
+  messageId?: string;
+  threadId?: string | null;
+  feedback?: string;
+  draft?: DraftPreview;
 };
 
-type RejectBody = {
-  feedback?: string;
-};
+function isValidDraft(draft: DraftPreview | undefined): draft is DraftPreview {
+  return Boolean(draft?.to?.trim() && draft?.subject?.trim() && draft?.body?.trim());
+}
 
 function errorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   return String(error);
 }
 
-export async function POST(request: Request, context: RouteContext) {
+export async function POST(request: Request) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -33,11 +35,9 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id } = await context.params;
-
-  let body: RejectBody;
+  let body: FeedbackBody;
   try {
-    body = (await request.json()) as RejectBody;
+    body = (await request.json()) as FeedbackBody;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -45,57 +45,54 @@ export async function POST(request: Request, context: RouteContext) {
   const feedback = body.feedback?.trim();
   if (!feedback) {
     return NextResponse.json(
-      { error: "Feedback is required when rejecting a draft" },
+      { error: "Feedback is required" },
+      { status: 400 }
+    );
+  }
+  if (!isValidDraft(body.draft)) {
+    return NextResponse.json(
+      { error: "Draft to/subject/body are required" },
       { status: 400 }
     );
   }
 
   try {
-    const pending = await getPendingDraft(user.id, id);
-    if (!pending) {
-      return NextResponse.json({ error: "Draft not found" }, { status: 404 });
-    }
-    if (pending.status !== "pending") {
-      return NextResponse.json(
-        { error: `Draft is already ${pending.status}` },
-        { status: 400 }
-      );
-    }
-
-    await markPendingDraftRejected(user.id, id, feedback);
-
     const { accessToken, googleEmail } = await getValidGmailAccessToken(user.id);
 
-    // 1) Update writing persona from feedback (private; not shown to user)
+    if (body.messageId) {
+      await updateChatMessageMetadata(user.id, body.messageId, {
+        draft: body.draft,
+        draftStatus: "revised",
+      });
+    }
+
     await runMailMindAgent({
       eventType: "feedback",
       userId: user.id,
       accessToken,
       gmailEmail: googleEmail,
-      pendingDraftId: id,
+      reviewDraft: body.draft,
       feedbackText: feedback,
-      chatThreadId: pending.threadId,
+      chatThreadId: body.threadId,
       traceContext: {
         userId: user.id,
-        chatThreadId: pending.threadId ?? undefined,
+        chatThreadId: body.threadId ?? undefined,
         environment: process.env.NODE_ENV ?? "development",
-        tags: ["draft-reject", "feedback"],
+        tags: ["draft-feedback"],
       },
     });
 
-    // 2) Propose improved draft
-    let nextPendingDraftId: string | null = null;
-    let pendingDraftPreview: PendingDraftPreview | null = null;
+    let proposedDraft: DraftPreview | null = null;
     let redraftError: string | null = null;
 
     try {
       const redraftMessage = `Rewrite an improved email draft using the user's feedback and updated writing persona. Call propose_draft exactly once with the improved email (keep the same recipient and thread ids when possible).
 
-Rejected draft:
-To: ${pending.toAddrs}
-Subject: ${pending.subject}
+Previous draft:
+To: ${body.draft.to}
+Subject: ${body.draft.subject}
 Body:
-${pending.body.slice(0, 2500)}
+${body.draft.body.slice(0, 2500)}
 
 User feedback:
 ${feedback}
@@ -109,55 +106,49 @@ Do not explain what you changed. Only call propose_draft.`;
         accessToken,
         gmailEmail: googleEmail,
         userId: user.id,
-        chatThreadId: pending.threadId,
+        chatThreadId: body.threadId,
         traceContext: {
           userId: user.id,
-          chatThreadId: pending.threadId ?? undefined,
+          chatThreadId: body.threadId ?? undefined,
           environment: process.env.NODE_ENV ?? "development",
-          tags: ["draft-reject", "redraft"],
+          tags: ["draft-feedback", "redraft"],
         },
       });
 
-      nextPendingDraftId = redraftResult.pendingDraftId ?? null;
-
-      if (nextPendingDraftId) {
-        const newDraft = await getPendingDraft(user.id, nextPendingDraftId);
-        if (newDraft) {
-          pendingDraftPreview = {
-            to: newDraft.toAddrs,
-            subject: newDraft.subject,
-            body: newDraft.body,
-          };
-        }
-      }
+      proposedDraft = redraftResult.proposedDraft ?? null;
     } catch (error) {
       redraftError = errorMessage(error);
     }
 
-    const reply = pendingDraftPreview
+    const reply = proposedDraft
       ? buildDraftReviewReply({ afterFeedback: true })
       : redraftError
         ? "Got it — I'll keep this in mind. I couldn't generate a new draft right now. Please ask me to try again in a moment."
         : buildDraftReviewReply({ afterFeedback: true });
 
-    const storedReply = pendingDraftPreview
-      ? `${reply}\n\n${formatDraftPreviewBlock(pendingDraftPreview)}`
+    const storedReply = proposedDraft
+      ? `${reply}\n\n${formatDraftPreviewBlock(proposedDraft)}`
       : reply;
 
-    if (pending.threadId) {
-      await addChatMessage(
-        pending.threadId,
-        "user",
-        `Reject feedback: ${feedback}`
+    let assistantMessageId: string | null = null;
+    if (body.threadId) {
+      await addChatMessage(body.threadId, "user", `Draft feedback: ${feedback}`);
+      const assistantMessage = await addChatMessage(
+        body.threadId,
+        "assistant",
+        storedReply,
+        proposedDraft
+          ? { draft: proposedDraft, draftStatus: "pending" }
+          : null
       );
-      await addChatMessage(pending.threadId, "assistant", storedReply);
+      assistantMessageId = assistantMessage.id;
     }
 
     return NextResponse.json({
       reply,
-      pendingDraftId: nextPendingDraftId,
-      pendingDraft: pendingDraftPreview,
-      rejectedDraftId: id,
+      draft: proposedDraft,
+      messageId: assistantMessageId,
+      draftStatus: proposedDraft ? "pending" : null,
       redraftError,
     });
   } catch (error) {

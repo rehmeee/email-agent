@@ -105,6 +105,41 @@ export function parseEmailAddress(value: string) {
   return emailMatch?.[0]?.trim() ?? value.trim();
 }
 
+/**
+ * Gmail thread IDs are hex (e.g. 19f81d3097b7be8c).
+ * Reject empty strings, UUIDs, placeholders, and other junk the model may invent.
+ */
+export function sanitizeGmailThreadId(
+  value?: string | null
+): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (/^(null|undefined|none|n\/a|\(omit.*\))$/i.test(trimmed)) {
+    return undefined;
+  }
+  // Chat UUIDs look like 8-4-4-4-12 hex with dashes — never valid Gmail thread ids.
+  if (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      trimmed
+    )
+  ) {
+    return undefined;
+  }
+  if (/^[0-9a-f]+$/i.test(trimmed) && trimmed.length >= 10) {
+    return trimmed;
+  }
+  return undefined;
+}
+
+function sanitizeHeaderValue(value?: string | null): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (/^(null|undefined|none|n\/a|\(omit.*\))$/i.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
 export type GmailMessageSummary = {
   id: string;
   threadId: string;
@@ -323,6 +358,10 @@ export async function createGmailDraft(
     references?: string;
   }
 ): Promise<GmailDraftResult> {
+  const threadId = sanitizeGmailThreadId(input.threadId);
+  const inReplyTo = sanitizeHeaderValue(input.inReplyTo);
+  const references = sanitizeHeaderValue(input.references) ?? inReplyTo;
+
   const mimeLines = [
     `To: ${input.to}`,
     `Subject: ${input.subject}`,
@@ -330,9 +369,9 @@ export async function createGmailDraft(
     "Content-Type: text/plain; charset=UTF-8",
   ];
 
-  if (input.inReplyTo) {
-    mimeLines.push(`In-Reply-To: ${input.inReplyTo}`);
-    mimeLines.push(`References: ${input.references ?? input.inReplyTo}`);
+  if (inReplyTo) {
+    mimeLines.push(`In-Reply-To: ${inReplyTo}`);
+    mimeLines.push(`References: ${references}`);
   }
 
   mimeLines.push("", input.body);
@@ -341,8 +380,8 @@ export async function createGmailDraft(
     raw: encodeMimeMessage(mimeLines.join("\r\n")),
   };
 
-  if (input.threadId) {
-    message.threadId = input.threadId;
+  if (threadId) {
+    message.threadId = threadId;
   }
 
   const draft = await gmailFetch<{
