@@ -1,10 +1,11 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { createPendingDraft } from "@/lib/drafts/db";
+import type { DraftPreview } from "@/lib/drafts/preview";
 import {
   createGmailDraft,
   getGmailMessage,
   listGmailMessages,
+  sanitizeGmailThreadId,
   searchGmailMessages,
 } from "@/lib/gmail/api";
 
@@ -74,30 +75,26 @@ export function createGmailReadTools(accessToken: string) {
 }
 
 export function createProposeDraftTool(input: {
-  userId: string;
-  chatThreadId?: string | null;
-  onProposed?: (draftId: string) => void;
+  onProposed?: (draft: DraftPreview) => void;
 }) {
   return tool(
     async ({ to, subject, body, threadId, inReplyTo, references }) => {
-      const draft = await createPendingDraft({
-        userId: input.userId,
-        threadId: input.chatThreadId,
+      const draft: DraftPreview = {
         to,
         subject,
         body,
-        gmailThreadId: threadId,
-        inReplyTo,
-        references,
-      });
+        gmailThreadId: sanitizeGmailThreadId(threadId),
+        inReplyTo: inReplyTo?.trim() || undefined,
+        references: references?.trim() || undefined,
+      };
 
-      input.onProposed?.(draft.id);
+      input.onProposed?.(draft);
 
       return JSON.stringify(
         {
           success: true,
-          pendingDraftId: draft.id,
-          note: "Draft proposed for user review. It is NOT in Gmail yet. Wait for the user to Approve or Reject.",
+          draft,
+          note: "Draft proposed for user review. It is NOT in Gmail yet. Wait for thumbs up / chat OK, or feedback for changes.",
         },
         null,
         2
@@ -106,7 +103,7 @@ export function createProposeDraftTool(input: {
     {
       name: "propose_draft",
       description:
-        "Propose a draft email for the user to review in the app. Does NOT create a Gmail draft. Use this whenever the user wants you to write/draft an email or reply.",
+        "Propose a draft email for the user to review in chat. Does NOT create a Gmail draft. Use this whenever the user wants you to write/draft an email or reply.",
       schema: z.object({
         to: z.string().min(1).describe("Recipient email address"),
         subject: z.string().min(1).describe("Email subject line"),
@@ -114,7 +111,9 @@ export function createProposeDraftTool(input: {
         threadId: z
           .string()
           .optional()
-          .describe("Gmail thread id when replying to an existing email"),
+          .describe(
+            "Gmail thread id from read_email when replying. Omit for a new email. Never invent or use chat thread UUIDs."
+          ),
         inReplyTo: z
           .string()
           .optional()
@@ -160,7 +159,7 @@ export function createGmailDraftTool(
     {
       name: "create_draft",
       description:
-        "Create a draft email in the user's Gmail account. Does not send the email. Only use after the user has approved a proposed draft.",
+        "Create a draft email in the user's Gmail account. Does not send the email. Only use after the user has approved a proposed draft, or in autonomous inbox mode.",
       schema: z.object({
         to: z.string().min(1).describe("Recipient email address"),
         subject: z.string().min(1).describe("Email subject line"),
@@ -168,7 +167,9 @@ export function createGmailDraftTool(
         threadId: z
           .string()
           .optional()
-          .describe("Gmail thread id when replying to an existing email"),
+          .describe(
+            "Gmail thread id from read_email when replying. Omit for a new email. Never invent or use chat thread UUIDs."
+          ),
         inReplyTo: z
           .string()
           .optional()

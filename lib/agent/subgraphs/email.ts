@@ -1,6 +1,5 @@
 import {
   AIMessage,
-  HumanMessage,
   SystemMessage,
   type BaseMessage,
 } from "@langchain/core/messages";
@@ -13,7 +12,7 @@ import {
   createProposeDraftTool,
 } from "@/lib/agent/tools/gmail";
 import { hasToolCalls, runToolCalls } from "@/lib/agent/tools/run-tools";
-import { getPendingDraft, markPendingDraftApproved } from "@/lib/drafts/db";
+import type { DraftPreview } from "@/lib/drafts/preview";
 import { formatMemoryForPrompt } from "@/lib/memory/db";
 import { getAgentMemoryCached } from "@/lib/memory/store";
 import { getPersonaProfile } from "@/lib/persona/db";
@@ -59,17 +58,11 @@ async function loadPersonaMemory(state: MailMindStateType) {
       : getAgentMemoryCached(state.userId),
   ]);
 
-  let pendingDraft = state.pendingDraft ?? null;
-  if (state.eventType === "approve" && state.pendingDraftId && !pendingDraft) {
-    pendingDraft = await getPendingDraft(state.userId, state.pendingDraftId);
-  }
-
   return {
     persona: normalizePersonaProfile(
       personaRecord?.profile ?? emptyPersonaProfile()
     ),
     agentMemory: memoryLoad.memory,
-    pendingDraft,
     resultMeta: {
       memorySource: "source" in memoryLoad ? memoryLoad.source : "state",
     },
@@ -88,11 +81,11 @@ User memory — standing do / don't / facts (not writing style):
 ${formatMemoryForPrompt(state.agentMemory)}
 
 Rules:
+- Upstream triage already decided this email NEEDS a reply. Do not re-triage or skip.
 - The user message includes a Gmail message id. Call read_email for that id first.
-- Decide whether the email deserves a human reply. Skip newsletters, automated alerts, no-reply senders, receipts, and marketing unless user memory says otherwise.
-- If a reply is warranted, call create_draft with correct threadId, inReplyTo, and references from read_email. This writes a draft into Gmail → Drafts immediately (do not wait for approval).
-- If no reply is warranted, respond with one short line starting with "Skipped:" and the reason. Do not call create_draft.
-- Do not invent email content. Do not ask the user questions. Act autonomously.
+- Then call create_draft with a helpful reply using correct threadId, inReplyTo, and references from read_email.
+- create_draft writes into Gmail → Drafts immediately (do not wait for approval).
+- Do not invent facts. Follow user memory for names/preferences; follow persona for voice only.
 - Never claim you sent an email — create_draft only saves a draft.`;
 }
 
@@ -114,46 +107,19 @@ ${memoryUpdate}
 Rules:
 - Use list_emails, search_emails, and read_email to inspect mail. Do not invent emails.
 - When the user wants a draft/reply, call propose_draft. Do NOT create a Gmail draft yourself.
-- After propose_draft, tell the user the draft is ready for Approve / Reject in the chat UI.
+- After propose_draft, ask if the draft is OK or needs changes (thumbs up / thumbs down or reply in chat).
 - Never claim you sent an email.
 - Follow user memory for names/preferences; follow persona only for how the email prose sounds.
 - If the user only updated a preference and asks for nothing else, confirm the update; do not invent email work.`;
 }
 
-function buildApproveSystemPrompt(state: MailMindStateType) {
-  const draft = state.pendingDraft;
-  return `You are MailMind finalizing an approved email draft.
-
-The user approved this pending draft. You MUST call create_draft exactly once with these fields:
-- to: ${draft?.toAddrs ?? ""}
-- subject: ${draft?.subject ?? ""}
-- body: exactly the approved body below
-- threadId: ${draft?.gmailThreadId ?? "(omit if empty)"}
-- inReplyTo: ${draft?.inReplyTo ?? "(omit if empty)"}
-- references: ${draft?.referencesHeader ?? "(omit if empty)"}
-
-Approved body:
-${draft?.body ?? ""}
-
-After create_draft succeeds, briefly confirm the draft is in Gmail → Drafts and was not sent.`;
-}
-
 function toolsForEvent(
   state: MailMindStateType,
   handlers: {
-    onProposed?: (id: string) => void;
+    onProposed?: (draft: DraftPreview) => void;
     onCreated?: (id: string) => void;
   }
 ) {
-  if (state.eventType === "approve") {
-    return [
-      createGmailDraftTool(state.accessToken, {
-        onCreated: handlers.onCreated,
-      }),
-    ];
-  }
-
-  // Background push: write Gmail drafts directly (no Approve/Reject gate).
   if (state.eventType === "new_email") {
     return [
       ...createGmailReadTools(state.accessToken),
@@ -163,26 +129,22 @@ function toolsForEvent(
     ];
   }
 
-  // Chat: propose for UI review first.
   return [
     ...createGmailReadTools(state.accessToken),
     createProposeDraftTool({
-      userId: state.userId,
-      chatThreadId: state.chatThreadId,
       onProposed: handlers.onProposed,
     }),
   ];
 }
 
 async function callModel(state: MailMindStateType) {
-  const isApprove = state.eventType === "approve";
   const isNewEmail = state.eventType === "new_email";
-  let proposedDraftId = state.pendingDraftId ?? null;
+  let reviewDraft = state.reviewDraft ?? null;
   let createdGmailDraftId = state.gmailDraftId ?? null;
 
   const tools = toolsForEvent(state, {
-    onProposed: (id) => {
-      proposedDraftId = id;
+    onProposed: (draft) => {
+      reviewDraft = draft;
     },
     onCreated: (id) => {
       createdGmailDraftId = id;
@@ -190,11 +152,9 @@ async function callModel(state: MailMindStateType) {
   });
 
   const llm = createLlm().bindTools(tools);
-  const system = isApprove
-    ? buildApproveSystemPrompt(state)
-    : isNewEmail
-      ? buildNewEmailSystemPrompt(state)
-      : buildChatSystemPrompt(state);
+  const system = isNewEmail
+    ? buildNewEmailSystemPrompt(state)
+    : buildChatSystemPrompt(state);
 
   const response = await llm.invoke([
     new SystemMessage(system),
@@ -203,7 +163,7 @@ async function callModel(state: MailMindStateType) {
 
   return {
     messages: [response],
-    pendingDraftId: proposedDraftId,
+    reviewDraft,
     gmailDraftId: createdGmailDraftId,
   };
 }
@@ -212,12 +172,12 @@ async function runTools(state: MailMindStateType) {
   const last = state.messages.at(-1);
   if (!last) return {};
 
-  let proposedDraftId = state.pendingDraftId ?? null;
+  let reviewDraft = state.reviewDraft ?? null;
   let createdGmailDraftId = state.gmailDraftId ?? null;
 
   const tools = toolsForEvent(state, {
-    onProposed: (id) => {
-      proposedDraftId = id;
+    onProposed: (draft) => {
+      reviewDraft = draft;
     },
     onCreated: (id) => {
       createdGmailDraftId = id;
@@ -227,7 +187,7 @@ async function runTools(state: MailMindStateType) {
   const toolMessages = await runToolCalls(last, tools);
   return {
     messages: toolMessages,
-    pendingDraftId: proposedDraftId,
+    reviewDraft,
     gmailDraftId: createdGmailDraftId,
   };
 }
@@ -241,24 +201,6 @@ function routeAfterModel(state: MailMindStateType) {
 }
 
 async function finalize(state: MailMindStateType) {
-  if (state.eventType === "approve") {
-    if (state.pendingDraftId && state.gmailDraftId) {
-      await markPendingDraftApproved(
-        state.userId,
-        state.pendingDraftId,
-        state.gmailDraftId
-      );
-    }
-
-    return {
-      reply: extractReplyText(state.messages),
-      resultMeta: {
-        gmailDraftCreated: Boolean(state.gmailDraftId),
-        pendingDraftId: state.pendingDraftId ?? null,
-      },
-    };
-  }
-
   if (state.eventType === "new_email") {
     return {
       reply: extractReplyText(state.messages),
@@ -271,8 +213,9 @@ async function finalize(state: MailMindStateType) {
 
   return {
     reply: extractReplyText(state.messages),
+    reviewDraft: state.reviewDraft ?? null,
     resultMeta: {
-      pendingDraftId: state.pendingDraftId ?? null,
+      proposedDraft: state.reviewDraft ?? null,
     },
   };
 }
@@ -293,12 +236,4 @@ export function createEmailSubgraph() {
     .addEdge("finalize", END);
 
   return graph.compile();
-}
-
-export function buildApproveMessages(pendingDraftId: string): BaseMessage[] {
-  return [
-    new HumanMessage(
-      `The pending draft ${pendingDraftId} was approved. Call create_draft now with the approved fields from the system prompt.`
-    ),
-  ];
 }

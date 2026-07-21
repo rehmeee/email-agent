@@ -20,7 +20,14 @@ export async function GET(
   try {
     const messages = await getChatThreadMessages(user.id, threadId);
     return NextResponse.json({
-      messages: messages.map(({ role, content }) => ({ role, content })),
+      messages: messages.map(({ id, role, content, metadata }) => ({
+        id,
+        role,
+        content,
+        draft: metadata?.draft ?? null,
+        draftStatus: metadata?.draftStatus ?? null,
+        messageId: id,
+      })),
     });
   } catch (error) {
     const message =

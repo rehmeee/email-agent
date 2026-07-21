@@ -83,7 +83,7 @@ function fallbackSummaryFromFeedback(
 async function mergeFeedbackWithLlm(
   currentPersona: PersonaProfile,
   feedback: string,
-  draft: MailMindStateType["pendingDraft"]
+  draft: { subject?: string; body?: string } | null | undefined
 ) {
   const system = `You update writing-persona feedback from a rejected email draft.
 Return ONLY JSON with this shape:
@@ -155,7 +155,7 @@ async function applyFeedback(state: MailMindStateType) {
     throw new Error("Feedback text is required");
   }
 
-  const draft = state.pendingDraft;
+  const draft = state.reviewDraft;
   const currentPersona = normalizePersonaProfile(
     (state.persona as PersonaProfile | null) ?? emptyPersonaProfile()
   );

@@ -9,6 +9,7 @@ import {
   isGmailMessageProcessed,
   markGmailMessageProcessed,
 } from "@/lib/gmail/processed";
+import { fetchAndTriageGmailMessage } from "@/lib/gmail/triage";
 import { seedHistoryIdFromProfile } from "@/lib/gmail/watch";
 
 function historyIdTooOldError(error: unknown) {
@@ -51,28 +52,49 @@ export async function processNewGmailMessage(input: {
     return { skipped: true, reason: "already_processed" as const };
   }
 
+  const { triage } = await fetchAndTriageGmailMessage(
+    input.accessToken,
+    input.messageId
+  );
+
+  if (triage.decision === "skip") {
+    await markGmailMessageProcessed(input.userId, input.messageId, "skipped");
+    return {
+      skipped: true,
+      reason: triage.reason,
+      action: "skipped" as const,
+      gmailDraftCreated: false,
+      reply: `Skipped: ${triage.reason}`,
+      triage,
+    };
+  }
+
   const result = await runMailMindAgent({
     eventType: "new_email",
     userId: input.userId,
     accessToken: input.accessToken,
     gmailEmail: input.gmailEmail,
     gmailMessageId: input.messageId,
+    triageReason: triage.reason,
     traceContext: {
       userId: input.userId,
       environment: process.env.NODE_ENV ?? "development",
-      tags: ["gmail-push", "new-email"],
+      tags: ["gmail-push", "new-email", "needs-reply"],
     },
   });
 
-  const action = result.gmailDraftCreated ? "drafted" : "triaged";
+  const action = result.gmailDraftCreated ? "drafted" : "skipped";
   await markGmailMessageProcessed(input.userId, input.messageId, action);
 
   return {
-    skipped: false,
+    skipped: !result.gmailDraftCreated,
+    reason: result.gmailDraftCreated
+      ? triage.reason
+      : result.reply || "Agent did not create a draft",
     action,
-    pendingDraftId: null,
     gmailDraftCreated: Boolean(result.gmailDraftCreated),
     reply: result.reply,
+    triage,
   };
 }
 
@@ -116,6 +138,7 @@ export async function syncGmailHistoryForUser(input: {
     messageId: string;
     action: string;
     gmailDraftCreated?: boolean;
+    reason?: string;
   }> = [];
 
   for (const messageId of syncResult.addedMessageIds) {
@@ -126,13 +149,16 @@ export async function syncGmailHistoryForUser(input: {
       messageId,
     });
 
-    if (!result.skipped) {
-      processed.push({
-        messageId,
-        action: result.action ?? "triaged",
-        gmailDraftCreated: Boolean(result.gmailDraftCreated),
-      });
+    if (result.reason === "already_processed") {
+      continue;
     }
+
+    processed.push({
+      messageId,
+      action: result.action ?? (result.skipped ? "skipped" : "drafted"),
+      gmailDraftCreated: Boolean(result.gmailDraftCreated),
+      reason: "reason" in result ? result.reason : undefined,
+    });
   }
 
   return {
@@ -170,6 +196,7 @@ export async function processGmailPushNotification(input: {
     email: input.emailAddress,
     newMessages: sync.newMessages,
     processed: sync.processed.length,
+    outcomes: sync.processed,
   });
 
   return { ok: true, matched: true, ...sync };

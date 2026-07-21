@@ -4,14 +4,13 @@ import {
   type BaseMessage,
 } from "@langchain/core/messages";
 import { invokeMainGraph } from "@/lib/agent/main-graph";
-import { buildApproveMessages } from "@/lib/agent/subgraphs/email";
 import {
   type ChatHistoryItem,
   type MailMindAgentInput,
   type MailMindAgentResult,
   wrapWithLangSmithTrace,
 } from "@/lib/agent/tracing";
-import { getPendingDraft } from "@/lib/drafts/db";
+import type { DraftPreview } from "@/lib/drafts/preview";
 
 export type { ChatHistoryItem, MailMindAgentResult } from "@/lib/agent/tracing";
 
@@ -21,6 +20,20 @@ function toLangChainMessages(history: ChatHistoryItem[]): BaseMessage[] {
       ? new HumanMessage(item.content)
       : new AIMessage(item.content)
   );
+}
+
+function asDraftPreview(value: unknown): DraftPreview | null {
+  if (!value || typeof value !== "object") return null;
+  const draft = value as Partial<DraftPreview>;
+  if (!draft.to || !draft.subject || !draft.body) return null;
+  return {
+    to: draft.to,
+    subject: draft.subject,
+    body: draft.body,
+    gmailThreadId: draft.gmailThreadId,
+    inReplyTo: draft.inReplyTo,
+    references: draft.references,
+  };
 }
 
 async function runMailMindAgentImpl(
@@ -47,16 +60,11 @@ async function runMailMindAgentImpl(
   }
 
   if (eventType === "feedback") {
-    if (!input.pendingDraftId) {
-      throw new Error("pendingDraftId is required for feedback");
+    if (!input.feedbackText?.trim()) {
+      throw new Error("feedbackText is required for feedback");
     }
-
-    const pendingDraft = await getPendingDraft(
-      input.userId,
-      input.pendingDraftId
-    );
-    if (!pendingDraft) {
-      throw new Error("Pending draft not found");
+    if (!input.reviewDraft) {
+      throw new Error("reviewDraft is required for feedback");
     }
 
     const result = await invokeMainGraph({
@@ -64,8 +72,7 @@ async function runMailMindAgentImpl(
       userId: input.userId,
       accessToken: input.accessToken,
       gmailEmail: input.gmailEmail,
-      pendingDraftId: input.pendingDraftId,
-      pendingDraft,
+      reviewDraft: input.reviewDraft,
       feedbackText: input.feedbackText,
       messages: [],
     });
@@ -80,6 +87,10 @@ async function runMailMindAgentImpl(
       throw new Error("gmailMessageId is required for new_email");
     }
 
+    const triageNote = input.triageReason
+      ? ` Triage already decided this needs a reply: ${input.triageReason}.`
+      : "";
+
     const result = await invokeMainGraph({
       eventType,
       userId: input.userId,
@@ -87,51 +98,16 @@ async function runMailMindAgentImpl(
       gmailEmail: input.gmailEmail,
       messages: [
         new HumanMessage(
-          `New inbox message id: ${input.gmailMessageId}. Read it, decide if it needs a reply, and call create_draft when appropriate (no approval step).`
+          `New inbox message id: ${input.gmailMessageId}.${triageNote} Read it and call create_draft with a helpful reply (no approval step). Do not skip.`
         ),
       ],
     });
 
     return {
-      reply: result.reply || "Triage complete.",
+      reply: result.reply || "Draft complete.",
       gmailDraftCreated: Boolean(
         result.resultMeta?.gmailDraftCreated || result.gmailDraftId
       ),
-      pendingDraftId: null,
-    };
-  }
-
-  if (eventType === "approve") {
-    if (!input.pendingDraftId) {
-      throw new Error("pendingDraftId is required for approve");
-    }
-
-    const pendingDraft = await getPendingDraft(
-      input.userId,
-      input.pendingDraftId
-    );
-    if (!pendingDraft) {
-      throw new Error("Pending draft not found");
-    }
-    if (pendingDraft.status !== "pending") {
-      throw new Error(`Draft is already ${pendingDraft.status}`);
-    }
-
-    const result = await invokeMainGraph({
-      eventType,
-      userId: input.userId,
-      accessToken: input.accessToken,
-      gmailEmail: input.gmailEmail,
-      chatThreadId: input.chatThreadId ?? pendingDraft.threadId,
-      pendingDraftId: input.pendingDraftId,
-      pendingDraft,
-      messages: buildApproveMessages(input.pendingDraftId),
-    });
-
-    return {
-      reply: result.reply || "Draft saved to Gmail.",
-      pendingDraftId: input.pendingDraftId,
-      gmailDraftCreated: Boolean(result.gmailDraftId),
     };
   }
 
@@ -152,12 +128,13 @@ async function runMailMindAgentImpl(
     ],
   });
 
+  const proposedDraft =
+    asDraftPreview(result.reviewDraft) ??
+    asDraftPreview(result.resultMeta?.proposedDraft);
+
   return {
     reply: result.reply || "I could not generate a response.",
-    pendingDraftId:
-      typeof result.resultMeta?.pendingDraftId === "string"
-        ? result.resultMeta.pendingDraftId
-        : result.pendingDraftId ?? null,
+    proposedDraft,
     memorySaved: Boolean(result.resultMeta?.memorySaved),
   };
 }

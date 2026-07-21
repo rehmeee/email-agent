@@ -1,13 +1,12 @@
 import { Annotation, messagesStateReducer } from "@langchain/langgraph";
 import type { BaseMessage } from "@langchain/core/messages";
-import type { PendingDraft } from "@/lib/drafts/db";
+import type { DraftPreview } from "@/lib/drafts/preview";
 import type { AgentMemoryDocument } from "@/lib/memory/types";
 import type { PersonaProfile } from "@/lib/persona/types";
 
 export type AgentEventType =
   | "gmail_connected"
   | "chat"
-  | "approve"
   | "feedback"
   | "new_email";
 
@@ -42,8 +41,11 @@ export const MailMindState = Annotation.Root({
     reducer: (_left, right) => right ?? null,
     default: () => null,
   }),
-  pendingDraftId: Annotation<string | null | undefined>,
-  pendingDraft: Annotation<PendingDraft | null | undefined>,
+  /** In-memory draft for feedback / propose (not a DB row). */
+  reviewDraft: Annotation<DraftPreview | null | undefined>({
+    reducer: (_left, right) => right ?? null,
+    default: () => null,
+  }),
   feedbackText: Annotation<string | null | undefined>,
   gmailDraftId: Annotation<string | null | undefined>,
   /** Set by memory_gate when a durable preference/fact was just saved. */

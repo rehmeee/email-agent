@@ -1,5 +1,6 @@
 import { traceable } from "langsmith/traceable";
 import type { AgentEventType } from "@/lib/agent/state";
+import type { DraftPreview } from "@/lib/drafts/preview";
 
 export type ChatHistoryItem = {
   role: "user" | "assistant";
@@ -15,7 +16,7 @@ export type AgentTraceContext = {
 
 export type MailMindAgentResult = {
   reply: string;
-  pendingDraftId?: string | null;
+  proposedDraft?: DraftPreview | null;
   gmailDraftCreated?: boolean;
   personaStatus?: string | null;
   memorySaved?: boolean;
@@ -29,9 +30,11 @@ export type MailMindAgentInput = {
   gmailEmail?: string | null;
   userId: string;
   chatThreadId?: string | null;
-  pendingDraftId?: string | null;
   feedbackText?: string | null;
+  reviewDraft?: DraftPreview | null;
   gmailMessageId?: string | null;
+  /** Why triage decided needs_reply (Pub/Sub path only). */
+  triageReason?: string | null;
   traceContext?: AgentTraceContext;
 };
 
@@ -58,9 +61,10 @@ export function redactAgentInput(input: MailMindAgentInput) {
     gmailEmail: input.gmailEmail ?? null,
     userId: input.userId,
     chatThreadId: input.chatThreadId ?? null,
-    pendingDraftId: input.pendingDraftId ?? null,
     feedbackText: input.feedbackText ?? null,
+    hasReviewDraft: Boolean(input.reviewDraft),
     gmailMessageId: input.gmailMessageId ?? null,
+    triageReason: input.triageReason ?? null,
     traceContext: input.traceContext,
     accessToken: "[REDACTED]",
   };
