@@ -3,6 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.compose",
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/drive.readonly",
 ];
 
 export const REQUIRED_GMAIL_SCOPE_PREFIX = "gmail.readonly";
@@ -23,8 +25,31 @@ function tokenHasGmailComposeScope(scopes: string[]) {
   );
 }
 
+function tokenHasCalendarWriteScope(scopes: string[]) {
+  return scopes.some(
+    (scope) =>
+      scope.includes("calendar.events") ||
+      // Full calendar scope also covers event create/update.
+      scope.endsWith("/auth/calendar")
+  );
+}
+
+function tokenHasDriveReadScope(scopes: string[]) {
+  return scopes.some(
+    (scope) =>
+      scope.includes("drive.readonly") ||
+      scope.includes("drive.file") ||
+      scope.endsWith("/auth/drive")
+  );
+}
+
 function tokenHasRequiredGmailScopes(scopes: string[]) {
-  return tokenHasGmailReadScope(scopes) && tokenHasGmailComposeScope(scopes);
+  return (
+    tokenHasGmailReadScope(scopes) &&
+    tokenHasGmailComposeScope(scopes) &&
+    tokenHasCalendarWriteScope(scopes) &&
+    tokenHasDriveReadScope(scopes)
+  );
 }
 
 export async function fetchGoogleTokenScopes(accessToken: string) {
@@ -402,9 +427,15 @@ async function assertGmailScopes(accessToken: string) {
     if (!tokenHasGmailComposeScope(scopes)) {
       missing.push("gmail.compose");
     }
+    if (!tokenHasCalendarWriteScope(scopes)) {
+      missing.push("calendar.events");
+    }
+    if (!tokenHasDriveReadScope(scopes)) {
+      missing.push("drive.readonly");
+    }
 
     throw new Error(
-      `Gmail is missing required permissions (${missing.join(", ")}). Click Reconnect Gmail on the dashboard to grant inbox read and draft access.`
+      `Gmail is missing required permissions (${missing.join(", ")}). Click Reconnect Gmail on the dashboard to grant inbox, draft, calendar, and Drive access.`
     );
   }
 }

@@ -1,0 +1,20 @@
+# Production / long-running google_workspace_mcp for MailMind.
+# Usage:
+#   docker compose -f docker-compose.mcp.yml up -d
+# Then set WORKSPACE_MCP_URL to https://<host>:8000/mcp (or your reverse-proxy URL).
+services:
+  workspace-mcp:
+    image: ghcr.io/taylorwilsdon/google_workspace_mcp:latest
+    ports:
+      - "8000:8000"
+    environment:
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      MCP_ENABLE_OAUTH21: "true"
+      EXTERNAL_OAUTH21_PROVIDER: "true"
+      WORKSPACE_MCP_STATELESS_MODE: "true"
+      WORKSPACE_MCP_TOOLS: "gmail drive calendar sheets docs"
+      WORKSPACE_MCP_TOOL_TIER: "extended"
+      WORKSPACE_MCP_TRANSPORT: "streamable-http"
+    command: ["--transport", "streamable-http"]
+    restart: unless-stopped

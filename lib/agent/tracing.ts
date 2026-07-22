@@ -33,6 +33,8 @@ export type MailMindAgentInput = {
   feedbackText?: string | null;
   reviewDraft?: DraftPreview | null;
   gmailMessageId?: string | null;
+  /** Prefetched Gmail thread transcript for new_email drafting. */
+  threadContext?: string | null;
   /** Why triage decided needs_reply (Pub/Sub path only). */
   triageReason?: string | null;
   traceContext?: AgentTraceContext;
@@ -64,6 +66,7 @@ export function redactAgentInput(input: MailMindAgentInput) {
     feedbackText: input.feedbackText ?? null,
     hasReviewDraft: Boolean(input.reviewDraft),
     gmailMessageId: input.gmailMessageId ?? null,
+    hasThreadContext: Boolean(input.threadContext),
     triageReason: input.triageReason ?? null,
     traceContext: input.traceContext,
     accessToken: "[REDACTED]",

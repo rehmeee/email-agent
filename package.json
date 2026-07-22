@@ -6,11 +6,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "mcp:start": "bash scripts/start-mcp.sh",
+    "mcp:docker": "docker compose -f docker-compose.mcp.yml --env-file .env up -d"
   },
   "dependencies": {
     "@langchain/core": "^1.2.1",
     "@langchain/langgraph": "^1.4.7",
+    "@langchain/mcp-adapters": "^1.1.3",
     "@langchain/openai": "^1.5.3",
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.110.0",
