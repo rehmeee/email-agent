@@ -91,6 +91,10 @@ async function runMailMindAgentImpl(
       ? ` Triage already decided this needs a reply: ${input.triageReason}.`
       : "";
 
+    const threadBlock = input.threadContext?.trim()
+      ? `\n\nConversation thread context (includes prior replies; reply to the LATEST inbound message):\n${input.threadContext.trim()}`
+      : "";
+
     const result = await invokeMainGraph({
       eventType,
       userId: input.userId,
@@ -98,7 +102,9 @@ async function runMailMindAgentImpl(
       gmailEmail: input.gmailEmail,
       messages: [
         new HumanMessage(
-          `New inbox message id: ${input.gmailMessageId}.${triageNote} Read it and call create_draft with a helpful reply (no approval step). Do not skip.`
+          `New inbox message id: ${input.gmailMessageId}.${triageNote}${threadBlock}
+
+Use the thread context above (call get_gmail_message_content only if you need more detail). Call draft_gmail_message with a helpful reply that fits the conversation. Use the latest message's thread_id, in_reply_to (Message-ID), and references. No approval step. Do not skip.`
         ),
       ],
     });

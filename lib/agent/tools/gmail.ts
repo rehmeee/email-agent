@@ -4,10 +4,15 @@ import type { DraftPreview } from "@/lib/drafts/preview";
 import {
   createGmailDraft,
   getGmailMessage,
+  getGmailThread,
   listGmailMessages,
   sanitizeGmailThreadId,
   searchGmailMessages,
 } from "@/lib/gmail/api";
+import {
+  formatThreadForPrompt,
+  loadThreadContextForReply,
+} from "@/lib/gmail/thread-context";
 
 export function createGmailReadTools(accessToken: string) {
   const listEmails = tool(
@@ -71,7 +76,63 @@ export function createGmailReadTools(accessToken: string) {
     }
   );
 
-  return [listEmails, searchEmails, readEmail];
+  const readThread = tool(
+    async ({ messageId, threadId }) => {
+      const id = messageId?.trim();
+      const tid = sanitizeGmailThreadId(threadId);
+
+      if (!id && !tid) {
+        return JSON.stringify({
+          error: "Provide messageId or threadId",
+        });
+      }
+
+      if (id) {
+        const loaded = await loadThreadContextForReply(accessToken, id);
+        return JSON.stringify(
+          {
+            source: loaded.source,
+            threadId: loaded.threadId,
+            messageCount: loaded.messageCount,
+            latestMessageId: loaded.latestMessageId,
+            threadContext: loaded.threadContext,
+          },
+          null,
+          2
+        );
+      }
+
+      const messages = await getGmailThread(accessToken, tid!);
+      return JSON.stringify(
+        {
+          source: "thread",
+          threadId: tid,
+          messageCount: messages.length,
+          latestMessageId: messages.at(-1)?.id ?? null,
+          threadContext: formatThreadForPrompt(messages, messages.at(-1)?.id),
+        },
+        null,
+        2
+      );
+    },
+    {
+      name: "read_thread",
+      description:
+        "Load a Gmail conversation thread (last up to 8 messages, including your sent replies). Prefer messageId from an email in the thread. Use before drafting when you need prior context.",
+      schema: z.object({
+        messageId: z
+          .string()
+          .optional()
+          .describe("Any Gmail message id in the thread"),
+        threadId: z
+          .string()
+          .optional()
+          .describe("Gmail thread id if already known"),
+      }),
+    }
+  );
+
+  return [listEmails, searchEmails, readEmail, readThread];
 }
 
 export function createProposeDraftTool(input: {

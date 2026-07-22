@@ -50,7 +50,7 @@ const viewTitles: Record<DashboardView, string> = {
 function buildSetupSteps(gmailConnected: boolean, agentReady: boolean) {
   return [
     { label: "Create your MailMind account", done: true },
-    { label: "Connect Gmail inbox", done: gmailConnected },
+    { label: "Connect Gmail & Calendar", done: gmailConnected },
     { label: "Launch AI agent", done: agentReady },
   ];
 }
@@ -348,11 +348,11 @@ export function DashboardClient({
               />
               <span className="text-xs text-zinc-400">
                 {agentReady
-                  ? `Gmail connected${gmail.email ? ` · ${gmail.email}` : ""}`
+                  ? `Gmail & Calendar connected${gmail.email ? ` · ${gmail.email}` : ""}`
                   : gmail.needsReconnect
-                    ? "Gmail needs reconnect"
+                    ? "Reconnect needed"
                     : gmail.connected
-                      ? "Gmail connected (limited scopes)"
+                      ? "Connected (limited scopes)"
                       : "Gmail not connected"}
               </span>
             </div>
@@ -371,8 +371,8 @@ export function DashboardClient({
                   className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-zinc-900 transition hover:bg-zinc-100"
                 >
                   {gmail.needsReconnect || gmail.connected
-                    ? "Reconnect Gmail"
-                    : "Connect Gmail"}
+                    ? "Reconnect Gmail & Calendar"
+                    : "Connect Gmail & Calendar"}
                 </button>
               </form>
             )}
@@ -381,9 +381,10 @@ export function DashboardClient({
 
         {gmail.needsReconnect ? (
           <div className="mx-6 mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-            Gmail is linked without full inbox/draft permissions (this often happens after Google
-            sign-in). Click <strong>Reconnect Gmail</strong> and approve read + compose access on
-            the Google consent screen.
+            Gmail is linked without full inbox, draft, and calendar permissions (this often happens
+            after Google sign-in, or when Calendar was added later). Click{" "}
+            <strong>Reconnect Gmail & Calendar</strong> and approve read, compose, and calendar
+            access on the Google consent screen.
           </div>
         ) : null}
 

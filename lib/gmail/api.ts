@@ -16,6 +16,7 @@ type GmailMessageResponse = {
   id: string;
   threadId: string;
   snippet?: string;
+  labelIds?: string[];
   payload?: {
     headers?: GmailHeader[];
     body?: { data?: string };
@@ -339,6 +340,69 @@ export async function getGmailMessage(
     to: getHeader(headers, "To"),
     replyToEmail: parseEmailAddress(summary.from),
   };
+}
+
+export type GmailThreadMessage = {
+  id: string;
+  threadId: string;
+  subject: string;
+  from: string;
+  to: string;
+  date: string;
+  snippet: string;
+  body: string;
+  messageIdHeader: string;
+  replyToEmail: string;
+  labelIds: string[];
+  isSent: boolean;
+};
+
+type GmailThreadResponse = {
+  id: string;
+  historyId?: string;
+  messages?: GmailMessageResponse[];
+  error?: { message?: string };
+};
+
+function toThreadMessage(message: GmailMessageResponse): GmailThreadMessage {
+  const summary = toSummary(message);
+  const headers = message.payload?.headers ?? [];
+  const body = extractPlainText(message.payload).trim();
+  const labelIds = message.labelIds ?? [];
+
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    subject: summary.subject,
+    from: summary.from,
+    to: getHeader(headers, "To"),
+    date: summary.date,
+    snippet: summary.snippet,
+    body: body || summary.snippet,
+    messageIdHeader: getHeader(headers, "Message-ID"),
+    replyToEmail: parseEmailAddress(summary.from),
+    labelIds,
+    isSent: labelIds.includes("SENT"),
+  };
+}
+
+/** Full conversation for a Gmail thread (inbound + sent), oldest → newest. */
+export async function getGmailThread(
+  accessToken: string,
+  threadId: string
+): Promise<GmailThreadMessage[]> {
+  const safeThreadId = sanitizeGmailThreadId(threadId);
+  if (!safeThreadId) {
+    throw new Error("Invalid Gmail thread id");
+  }
+
+  const thread = await gmailFetch<GmailThreadResponse>(
+    accessToken,
+    `/threads/${safeThreadId}?format=full`
+  );
+
+  const messages = thread.messages ?? [];
+  return messages.map(toThreadMessage);
 }
 
 export type GmailDraftResult = {

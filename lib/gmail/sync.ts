@@ -9,6 +9,7 @@ import {
   isGmailMessageProcessed,
   markGmailMessageProcessed,
 } from "@/lib/gmail/processed";
+import { loadThreadContextForReply } from "@/lib/gmail/thread-context";
 import { fetchAndTriageGmailMessage } from "@/lib/gmail/triage";
 import { seedHistoryIdFromProfile } from "@/lib/gmail/watch";
 
@@ -69,17 +70,30 @@ export async function processNewGmailMessage(input: {
     };
   }
 
+  const threadLoad = await loadThreadContextForReply(
+    input.accessToken,
+    input.messageId
+  );
+
+  console.log("[Gmail Thread] Context ready", {
+    messageId: input.messageId,
+    threadId: threadLoad.threadId,
+    messageCount: threadLoad.messageCount,
+    source: threadLoad.source,
+  });
+
   const result = await runMailMindAgent({
     eventType: "new_email",
     userId: input.userId,
     accessToken: input.accessToken,
     gmailEmail: input.gmailEmail,
     gmailMessageId: input.messageId,
+    threadContext: threadLoad.threadContext,
     triageReason: triage.reason,
     traceContext: {
       userId: input.userId,
       environment: process.env.NODE_ENV ?? "development",
-      tags: ["gmail-push", "new-email", "needs-reply"],
+      tags: ["gmail-push", "new-email", "needs-reply", "thread-context"],
     },
   });
 
