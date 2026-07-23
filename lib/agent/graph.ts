@@ -42,21 +42,9 @@ async function runMailMindAgentImpl(
   const eventType = input.eventType ?? "chat";
 
   if (eventType === "gmail_connected") {
-    const result = await invokeMainGraph({
-      eventType,
-      userId: input.userId,
-      accessToken: input.accessToken,
-      gmailEmail: input.gmailEmail,
-      messages: [],
-    });
-
-    return {
-      reply: result.reply || "Persona generation finished.",
-      personaStatus:
-        typeof result.resultMeta?.personaStatus === "string"
-          ? result.resultMeta.personaStatus
-          : "ready",
-    };
+    throw new Error(
+      "Persona bootstrap must use runPersonaAgent via /api/agent/persona/bootstrap"
+    );
   }
 
   if (eventType === "feedback") {

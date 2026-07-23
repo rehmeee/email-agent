@@ -107,6 +107,8 @@ export function DashboardClient({
     "idle" | "building" | "ready" | "failed" | null
   >(null);
   const [personaMessage, setPersonaMessage] = useState<string | null>(null);
+  const [personaDefaulted, setPersonaDefaulted] = useState(false);
+  const [personaRetryToken, setPersonaRetryToken] = useState(0);
 
   const metrics = buildMetrics(gmail.connected, agentReady, draftCount);
 
@@ -115,6 +117,31 @@ export function DashboardClient({
 
     let cancelled = false;
     const bootKey = "mailmind_persona_boot_started";
+    const maxAttempts = 3;
+
+    async function postBootstrap(attempt: number) {
+      if (attempt > 1) {
+        setPersonaStatus("building");
+        setPersonaMessage(
+          "Something went wrong building your writing persona. Retrying…"
+        );
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+
+      const response = await fetch("/api/agent/persona/bootstrap", {
+        method: "POST",
+      });
+      const payload = (await response.json()) as {
+        reply?: string;
+        status?: string;
+        error?: string;
+        skipped?: boolean;
+        personaDefaulted?: boolean;
+        sourceSampleCount?: number;
+      };
+
+      return { response, payload };
+    }
 
     void (async () => {
       try {
@@ -122,18 +149,25 @@ export function DashboardClient({
         const statusPayload = (await statusResponse.json()) as {
           status?: string | null;
           error?: string;
+          personaDefaulted?: boolean;
+          sourceSampleCount?: number;
         };
 
         if (cancelled) return;
 
         const currentStatus = statusPayload.status ?? null;
 
-        // Persona is created once. Reconnect Gmail must not rebuild it —
-        // later improvements come from draft reject feedback.
         if (currentStatus === "ready") {
           setPersonaStatus("ready");
+          setPersonaDefaulted(Boolean(statusPayload.personaDefaulted));
           if (gmailSuccess) {
-            setPersonaMessage("Gmail connected. Your existing writing persona is unchanged.");
+            setPersonaMessage(
+              "Gmail connected. Your existing writing persona is unchanged."
+            );
+          } else if (statusPayload.personaDefaulted) {
+            setPersonaMessage(
+              "Using a neutral default writing voice for now (not enough Sent mail to learn your style). It will improve from draft feedback."
+            );
           }
           return;
         }
@@ -152,10 +186,10 @@ export function DashboardClient({
           return;
         }
 
-        // Avoid React Strict Mode / double-mount firing two concurrent POSTs.
         if (
           typeof sessionStorage !== "undefined" &&
-          sessionStorage.getItem(bootKey) === "1"
+          sessionStorage.getItem(bootKey) === "1" &&
+          personaRetryToken === 0
         ) {
           setPersonaStatus("building");
           setPersonaMessage("Building your writing persona from Sent mail...");
@@ -166,38 +200,46 @@ export function DashboardClient({
         setPersonaStatus("building");
         setPersonaMessage("Building your writing persona from Sent mail...");
 
-        const response = await fetch("/api/agent/persona/bootstrap", {
-          method: "POST",
-        });
-        const payload = (await response.json()) as {
-          reply?: string;
-          status?: string;
-          error?: string;
-          skipped?: boolean;
-        };
+        let lastError = "Persona bootstrap failed";
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          if (cancelled) return;
 
-        if (cancelled) return;
+          const { response, payload } = await postBootstrap(attempt);
 
-        sessionStorage.removeItem(bootKey);
+          if (cancelled) return;
 
-        if (!response.ok) {
-          setPersonaStatus("failed");
-          setPersonaMessage(payload.error ?? "Persona bootstrap failed");
-          return;
+          if (response.ok) {
+            sessionStorage.removeItem(bootKey);
+            setPersonaDefaulted(Boolean(payload.personaDefaulted));
+            setPersonaStatus(
+              payload.status === "ready" ||
+                payload.status === "failed" ||
+                payload.status === "building"
+                ? payload.status
+                : "ready"
+            );
+            setPersonaMessage(
+              payload.skipped
+                ? "Your writing persona is already ready."
+                : (payload.reply ?? "Persona ready.")
+            );
+            return;
+          }
+
+          lastError = payload.error ?? "Persona bootstrap failed";
+          // Don't spin forever on auth/scope issues
+          if (
+            lastError.toLowerCase().includes("reconnect") ||
+            lastError.toLowerCase().includes("permission") ||
+            lastError.toLowerCase().includes("scope")
+          ) {
+            break;
+          }
         }
 
-        setPersonaStatus(
-          payload.status === "ready" ||
-            payload.status === "failed" ||
-            payload.status === "building"
-            ? payload.status
-            : "ready"
-        );
-        setPersonaMessage(
-          payload.skipped
-            ? "Your writing persona is already ready."
-            : (payload.reply ?? "Persona ready.")
-        );
+        sessionStorage.removeItem(bootKey);
+        setPersonaStatus("failed");
+        setPersonaMessage(lastError);
       } catch (error) {
         sessionStorage.removeItem(bootKey);
         if (!cancelled) {
@@ -212,7 +254,7 @@ export function DashboardClient({
     return () => {
       cancelled = true;
     };
-  }, [agentReady, gmailSuccess]);
+  }, [agentReady, gmailSuccess, personaRetryToken]);
 
   useEffect(() => {
     if (!agentReady) return;
@@ -427,6 +469,13 @@ export function DashboardClient({
           </div>
         ) : null}
 
+        {personaStatus === "ready" && personaDefaulted && !personaMessage ? (
+          <div className="mx-6 mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            Using a neutral default writing voice (not enough Sent mail to learn
+            your style yet). It will improve from draft feedback.
+          </div>
+        ) : null}
+
         {personaStatus === "failed" && personaMessage ? (
           <div className="mx-6 mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
             {personaMessage}
@@ -441,7 +490,25 @@ export function DashboardClient({
                 in Supabase, then refresh.
               </>
             ) : (
-              <> Wait a few seconds, then refresh the page to retry.</>
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="ml-2 underline underline-offset-2 hover:text-red-200"
+                  onClick={() => {
+                    if (typeof sessionStorage !== "undefined") {
+                      sessionStorage.removeItem("mailmind_persona_boot_started");
+                    }
+                    setPersonaStatus("building");
+                    setPersonaMessage(
+                      "Something went wrong building your writing persona. Retrying…"
+                    );
+                    setPersonaRetryToken((value) => value + 1);
+                  }}
+                >
+                  Retry
+                </button>
+              </>
             )}
           </div>
         ) : null}

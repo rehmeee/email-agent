@@ -27,7 +27,14 @@ const INBOX_TOOL_ALLOWLIST = [
   "draft_gmail_message",
 ];
 
-export type McpAgentKind = "chat" | "inbox";
+/** Persona bootstrap: Sent-mail search + batch content only. */
+const PERSONA_TOOL_ALLOWLIST = [
+  "search_gmail_messages",
+  "get_gmail_messages_content_batch",
+  "get_gmail_message_content",
+];
+
+export type McpAgentKind = "chat" | "inbox" | "persona";
 
 function getWorkspaceMcpUrl() {
   const url = process.env.WORKSPACE_MCP_URL;
@@ -37,6 +44,17 @@ function getWorkspaceMcpUrl() {
     );
   }
   return url;
+}
+
+function allowlistFor(agent: McpAgentKind) {
+  switch (agent) {
+    case "chat":
+      return CHAT_TOOL_ALLOWLIST;
+    case "inbox":
+      return INBOX_TOOL_ALLOWLIST;
+    case "persona":
+      return PERSONA_TOOL_ALLOWLIST;
+  }
 }
 
 /**
@@ -65,11 +83,22 @@ export async function getWorkspaceMcpTools(
     },
   });
 
-  const allowlist =
-    agent === "chat" ? CHAT_TOOL_ALLOWLIST : INBOX_TOOL_ALLOWLIST;
-
+  const allowlist = allowlistFor(agent);
   const tools = await client.getTools();
   return tools.filter((tool) =>
     allowlist.includes(tool.name)
   ) as StructuredToolInterface[];
+}
+
+export async function invokeMcpTool(
+  tools: StructuredToolInterface[],
+  name: string,
+  args: Record<string, unknown>
+): Promise<string> {
+  const tool = tools.find((item) => item.name === name);
+  if (!tool) {
+    throw new Error(`MCP tool not available: ${name}`);
+  }
+  const result = await tool.invoke(args);
+  return typeof result === "string" ? result : JSON.stringify(result);
 }
