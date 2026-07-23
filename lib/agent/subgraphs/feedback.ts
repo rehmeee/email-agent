@@ -7,20 +7,20 @@ import { getPersonaProfile, updatePersonaProfile } from "@/lib/persona/db";
 import {
   emptyPersonaProfile,
   normalizePersonaProfile,
-  type FeedbackSummary,
+  type LearnedRules,
   type PersonaProfile,
 } from "@/lib/persona/types";
 
 const feedbackMergeSchema = z.object({
-  feedbackSummary: z.object({
+  learned_rules: z.object({
     do: z.array(z.string()),
     dont: z.array(z.string()),
   }),
-  tone: z.string().nullable().optional(),
+  greeting_default: z.string().nullable().optional(),
+  signoff_default: z.string().nullable().optional(),
   formality: z.enum(["casual", "neutral", "formal"]).nullable().optional(),
-  avgLength: z.enum(["short", "medium", "long"]).nullable().optional(),
-  greetingStyle: z.string().nullable().optional(),
-  signOff: z.string().nullable().optional(),
+  avg_length: z.enum(["short", "medium", "long"]).nullable().optional(),
+  voice_notes: z.string().nullable().optional(),
   changeNote: z.string(),
 });
 
@@ -54,10 +54,10 @@ function uniqueLines(lines: string[]) {
   return out.slice(0, 8);
 }
 
-function fallbackSummaryFromFeedback(
-  current: FeedbackSummary,
+function fallbackRulesFromFeedback(
+  current: LearnedRules,
   feedback: string
-): FeedbackSummary {
+): LearnedRules {
   const lower = feedback.toLowerCase();
   const doLines = [...current.do];
   const dontLines = [...current.dont];
@@ -85,35 +85,35 @@ async function mergeFeedbackWithLlm(
   feedback: string,
   draft: { subject?: string; body?: string } | null | undefined
 ) {
-  const system = `You update writing-persona feedback from a rejected email draft.
+  const system = `You update writing-persona learned_rules from a rejected email draft.
 Return ONLY JSON with this shape:
 {
-  "feedbackSummary": { "do": string[], "dont": string[] },
-  "tone": string | null,
+  "learned_rules": { "do": string[], "dont": string[] },
+  "greeting_default": string | null,
+  "signoff_default": string | null,
   "formality": "casual" | "neutral" | "formal" | null,
-  "avgLength": "short" | "medium" | "long" | null,
-  "greetingStyle": string | null,
-  "signOff": string | null,
+  "avg_length": "short" | "medium" | "long" | null,
+  "voice_notes": string | null,
   "changeNote": string
 }
 
 Rules:
-- Merge previous feedbackSummary with the new feedback into a short living summary.
+- Merge previous learned_rules with the new feedback into a short living summary.
 - Max 8 items per do/dont list. Replace conflicting older lines.
-- Only set tone/formality/avgLength/greetingStyle/signOff when feedback clearly implies a change; otherwise null.
+- Only set greeting_default/signoff_default/formality/avg_length/voice_notes when feedback clearly implies a change; otherwise null.
 - changeNote: one short sentence for the user.`;
 
-  const human = `Current feedbackSummary:
-${JSON.stringify(currentPersona.feedbackSummary, null, 2)}
+  const human = `Current learned_rules:
+${JSON.stringify(currentPersona.learned_rules, null, 2)}
 
 Current style fields:
 ${JSON.stringify(
   {
-    tone: currentPersona.tone,
-    formality: currentPersona.formality,
-    avgLength: currentPersona.avgLength,
-    greetingStyle: currentPersona.greetingStyle,
-    signOff: currentPersona.signOff,
+    greeting: currentPersona.greeting.default,
+    signoff: currentPersona.signoff.default,
+    formality: currentPersona.tone.formality,
+    avg_length: currentPersona.structure.avg_length,
+    voice_notes: currentPersona.tone.voice_notes,
   },
   null,
   2
@@ -126,8 +126,6 @@ ${(draft?.body ?? "").slice(0, 1200)}
 User feedback:
 ${feedback}`;
 
-  // Prefer plain completion + JSON parse — more reliable on OpenRouter than
-  // nested withStructuredOutput (which often returns "Provider returned error").
   const llm = createLlm();
   const response = await llm.invoke([
     new SystemMessage(system),
@@ -171,30 +169,53 @@ async function applyFeedback(state: MailMindStateType) {
 
     nextPersona = normalizePersonaProfile({
       ...currentPersona,
-      ...(merged.tone ? { tone: merged.tone } : {}),
-      ...(merged.formality ? { formality: merged.formality } : {}),
-      ...(merged.avgLength ? { avgLength: merged.avgLength } : {}),
-      ...(merged.greetingStyle ? { greetingStyle: merged.greetingStyle } : {}),
-      ...(merged.signOff ? { signOff: merged.signOff } : {}),
-      feedbackSummary: {
-        do: uniqueLines(merged.feedbackSummary.do),
-        dont: uniqueLines(merged.feedbackSummary.dont),
+      greeting: {
+        ...currentPersona.greeting,
+        ...(merged.greeting_default
+          ? { default: merged.greeting_default }
+          : {}),
       },
-      avoid: uniqueLines([
-        ...currentPersona.avoid,
-        ...merged.feedbackSummary.dont.slice(0, 3),
-      ]),
+      signoff: {
+        ...currentPersona.signoff,
+        ...(merged.signoff_default ? { default: merged.signoff_default } : {}),
+      },
+      tone: {
+        ...currentPersona.tone,
+        ...(merged.formality ? { formality: merged.formality } : {}),
+        ...(merged.voice_notes ? { voice_notes: merged.voice_notes } : {}),
+      },
+      structure: {
+        ...currentPersona.structure,
+        ...(merged.avg_length ? { avg_length: merged.avg_length } : {}),
+      },
+      learned_rules: {
+        do: uniqueLines(merged.learned_rules.do),
+        dont: uniqueLines(merged.learned_rules.dont),
+      },
+      phrasing: {
+        ...currentPersona.phrasing,
+        avoided_phrases: uniqueLines([
+          ...currentPersona.phrasing.avoided_phrases,
+          ...merged.learned_rules.dont.slice(0, 3),
+        ]).slice(0, 5),
+      },
     });
   } catch (error) {
-    // Never fail the reject UX on provider/schema issues — merge safely.
-    const summary = fallbackSummaryFromFeedback(
-      currentPersona.feedbackSummary,
+    void errorMessage(error);
+    const rules = fallbackRulesFromFeedback(
+      currentPersona.learned_rules,
       feedback
     );
     nextPersona = normalizePersonaProfile({
       ...currentPersona,
-      feedbackSummary: summary,
-      avoid: uniqueLines([...currentPersona.avoid, ...summary.dont.slice(0, 2)]),
+      learned_rules: rules,
+      phrasing: {
+        ...currentPersona.phrasing,
+        avoided_phrases: uniqueLines([
+          ...currentPersona.phrasing.avoided_phrases,
+          ...rules.dont.slice(0, 2),
+        ]).slice(0, 5),
+      },
     });
   }
 
@@ -203,7 +224,7 @@ async function applyFeedback(state: MailMindStateType) {
     reply: "I’ll keep this in mind for next time.",
     resultMeta: {
       personaFeedbackSummary: "Feedback merged into private writing guidance.",
-      feedbackSummary: nextPersona.feedbackSummary,
+      learned_rules: nextPersona.learned_rules,
     },
   };
 }
@@ -215,8 +236,7 @@ async function savePersona(state: MailMindStateType) {
   await updatePersonaProfile(state.userId, profile);
 
   return {
-    reply:
-      state.reply || "I’ll keep this in mind for next time.",
+    reply: state.reply || "I’ll keep this in mind for next time.",
     resultMeta: { feedbackSaved: true, personaUpdated: true },
   };
 }

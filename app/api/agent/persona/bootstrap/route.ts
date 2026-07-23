@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runMailMindAgent } from "@/lib/agent/graph";
+import { runPersonaAgent } from "@/lib/agent/agents/persona";
 import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 import { getPersonaProfile } from "@/lib/persona/db";
 import { createClient } from "@/lib/supabase/server";
@@ -39,6 +39,7 @@ export async function POST(request: Request) {
         status: "ready",
         profile: existing.profile,
         sourceSampleCount: existing.sourceSampleCount,
+        personaDefaulted: existing.sourceSampleCount < 5,
         skipped: true,
       });
     }
@@ -73,8 +74,7 @@ export async function POST(request: Request) {
       const { accessToken, googleEmail } = await getValidGmailAccessToken(
         user.id
       );
-      const result = await runMailMindAgent({
-        eventType: "gmail_connected",
+      const result = await runPersonaAgent({
         userId: user.id,
         accessToken,
         gmailEmail: googleEmail,
@@ -91,7 +91,9 @@ export async function POST(request: Request) {
         reply: result.reply,
         status: persona?.status ?? result.personaStatus ?? "ready",
         profile: persona?.profile ?? null,
-        sourceSampleCount: persona?.sourceSampleCount ?? 0,
+        sourceSampleCount:
+          persona?.sourceSampleCount ?? result.sourceSampleCount ?? 0,
+        personaDefaulted: result.personaDefaulted,
       });
     } finally {
       buildingLocks.delete(user.id);
@@ -121,6 +123,8 @@ export async function GET() {
       profile: persona?.profile ?? null,
       sourceSampleCount: persona?.sourceSampleCount ?? 0,
       errorMessage: persona?.errorMessage ?? null,
+      personaDefaulted:
+        persona?.status === "ready" && (persona.sourceSampleCount ?? 0) < 5,
     });
   } catch (error) {
     const message =
