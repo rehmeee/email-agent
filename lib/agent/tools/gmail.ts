@@ -237,9 +237,9 @@ export function createGmailDraftTool(
         to,
         subject,
         body,
-        threadId,
-        inReplyTo,
-        references,
+        threadId: threadId ?? undefined,
+        inReplyTo: inReplyTo ?? undefined,
+        references: references ?? undefined,
       });
 
       options?.onCreated?.(draft.draftId);
