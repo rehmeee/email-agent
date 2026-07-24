@@ -29,6 +29,7 @@ export async function GET() {
       to: record.to,
       subject: record.subject,
       body: record.body,
+      attachments: record.attachments,
       gmailThreadId: record.gmailThreadId,
       inReplyTo: record.inReplyTo,
       references: record.references,

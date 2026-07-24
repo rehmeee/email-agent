@@ -9,6 +9,7 @@ type MailMindDraft = {
   to: string;
   subject: string;
   body: string;
+  attachments?: Array<{ driveFileId: string; name: string }> | null;
   updatedAt: string;
 };
 
@@ -161,6 +162,12 @@ export function DraftsPanel({ enabled }: DraftsPanelProps) {
                         <p className="mt-1 truncate text-xs text-zinc-500">
                           To: {draft.to}
                         </p>
+                        {draft.attachments?.length ? (
+                          <p className="mt-1 truncate text-xs text-zinc-500">
+                            Attachments:{" "}
+                            {draft.attachments.map((a) => a.name).join(", ")}
+                          </p>
+                        ) : null}
                         {!expanded ? (
                           <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-zinc-400">
                             {draft.body}
@@ -175,6 +182,12 @@ export function DraftsPanel({ enabled }: DraftsPanelProps) {
 
                   {expanded ? (
                     <div className="mt-4 space-y-3 border-t border-white/[0.06] pt-4">
+                      {draft.attachments?.length ? (
+                        <p className="text-xs text-zinc-400">
+                          Attachments:{" "}
+                          {draft.attachments.map((a) => a.name).join(", ")}
+                        </p>
+                      ) : null}
                       <pre className="whitespace-pre-wrap rounded-lg bg-black/30 p-3 text-sm leading-relaxed text-zinc-300">
                         {draft.body}
                       </pre>

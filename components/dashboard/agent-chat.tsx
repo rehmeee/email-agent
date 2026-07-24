@@ -15,6 +15,12 @@ type DraftPreview = {
   to: string;
   subject: string;
   body: string;
+  attachments?: Array<{
+    driveFileId: string;
+    name: string;
+    mimeType?: string;
+    exportFormat?: string;
+  }>;
   gmailThreadId?: string;
   inReplyTo?: string;
   references?: string;
@@ -88,6 +94,12 @@ function DraftPreviewCard({ draft }: { draft: DraftPreview }) {
         <p className="text-zinc-400">
           <span className="font-medium text-zinc-300">Subject:</span> {draft.subject}
         </p>
+        {draft.attachments?.length ? (
+          <p className="text-zinc-400">
+            <span className="font-medium text-zinc-300">Attachments:</span>{" "}
+            {draft.attachments.map((item) => item.name).join(", ")}
+          </p>
+        ) : null}
       </div>
       <div className="border-t border-white/10 pt-3">
         <p className="whitespace-pre-wrap text-[15px] leading-7 text-zinc-100">
