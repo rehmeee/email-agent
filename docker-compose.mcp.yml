@@ -1,10 +1,17 @@
-# Production / long-running google_workspace_mcp for MailMind.
-# Usage:
-#   docker compose -f docker-compose.mcp.yml up -d
-# Then set WORKSPACE_MCP_URL to https://<host>:8000/mcp (or your reverse-proxy URL).
+# Local / self-hosted google_workspace_mcp for MailMind.
+# Builds YOUR image from Dockerfile.mcp (no Hub/GHCR pull of upstream).
+#
+#   npm run mcp:docker          # build + run locally
+#   npm run mcp:image           # build image only
+#   npm run mcp:image -- --push YOURUSER/mailmind-workspace-mcp:latest
+#
+# App env: WORKSPACE_MCP_URL=http://localhost:8000/mcp  (or your container URL)
 services:
   workspace-mcp:
-    image: ghcr.io/taylorwilsdon/google_workspace_mcp:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    image: mailmind-workspace-mcp:latest
     ports:
       - "8000:8000"
     environment:
@@ -13,8 +20,19 @@ services:
       MCP_ENABLE_OAUTH21: "true"
       EXTERNAL_OAUTH21_PROVIDER: "true"
       WORKSPACE_MCP_STATELESS_MODE: "true"
-      WORKSPACE_MCP_TOOLS: "gmail drive calendar sheets docs"
-      WORKSPACE_MCP_TOOL_TIER: "extended"
-      WORKSPACE_MCP_TRANSPORT: "streamable-http"
-    command: ["--transport", "streamable-http"]
+      OAUTHLIB_INSECURE_TRANSPORT: "1"
+    command:
+      [
+        "--transport",
+        "streamable-http",
+        "--tools",
+        "gmail",
+        "drive",
+        "calendar",
+        "sheets",
+        "docs",
+        "contacts",
+        "--tool-tier",
+        "extended",
+      ]
     restart: unless-stopped

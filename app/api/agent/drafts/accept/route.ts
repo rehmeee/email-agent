@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
+import { createGmailDraftViaMcp } from "@/lib/agent/mcp-draft";
 import {
   addChatMessage,
   updateChatMessageMetadata,
 } from "@/lib/chat/threads";
+import { saveMailMindDraft } from "@/lib/drafts/db";
 import type { DraftPreview } from "@/lib/drafts/preview";
-import { createGmailDraft } from "@/lib/gmail/api";
 import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 import { createClient } from "@/lib/supabase/server";
 
@@ -43,14 +44,22 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { accessToken } = await getValidGmailAccessToken(user.id);
-    const created = await createGmailDraft(accessToken, {
-      to: body.draft.to,
-      subject: body.draft.subject,
-      body: body.draft.body,
-      threadId: body.draft.gmailThreadId,
-      inReplyTo: body.draft.inReplyTo,
-      references: body.draft.references,
+    const { accessToken, googleEmail } = await getValidGmailAccessToken(user.id);
+    if (!googleEmail) {
+      throw new Error("Connected Gmail address is required to create a draft");
+    }
+
+    const created = await createGmailDraftViaMcp({
+      accessToken,
+      gmailEmail: googleEmail,
+      draft: body.draft,
+    });
+
+    await saveMailMindDraft({
+      userId: user.id,
+      gmailDraftId: created.draftId,
+      source: "chat",
+      draft: body.draft,
     });
 
     if (body.messageId) {

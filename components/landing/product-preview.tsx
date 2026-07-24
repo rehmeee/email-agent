@@ -87,7 +87,7 @@ export function ProductPreview() {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-white">AI Command Center</p>
-                <p className="text-xs text-zinc-500">LangGraph agent · OpenRouter</p>
+                <p className="text-xs text-zinc-500">LangGraph agent · DeepSeek</p>
               </div>
               <div className="rounded-md border border-white/[0.06] bg-white/[0.03] px-2 py-1 font-mono text-[10px] text-zinc-500">
                 ⌘K

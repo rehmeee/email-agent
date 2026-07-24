@@ -18,6 +18,8 @@ export type MailMindAgentResult = {
   reply: string;
   proposedDraft?: DraftPreview | null;
   gmailDraftCreated?: boolean;
+  gmailDraftId?: string | null;
+  inboxDraftPreview?: DraftPreview | null;
   personaStatus?: string | null;
   memorySaved?: boolean;
 };

@@ -379,6 +379,13 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
         }),
       });
 
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        throw new Error(
+          `Chat API returned ${response.status} (non-JSON). Try refreshing — the dev server may need a restart.`,
+        );
+      }
+
       const payload = (await response.json()) as {
         reply?: string;
         threadId?: string;
@@ -718,7 +725,7 @@ export function AgentChat({ enabled, onDraftsMaybeCreated }: AgentChatProps) {
               />
               <div>
                 <h2 className="font-semibold">AI Agent</h2>
-                <p className="text-xs text-zinc-500">LangGraph · OpenRouter · Gmail</p>
+                <p className="text-xs text-zinc-500">LangGraph · DeepSeek · Gmail</p>
               </div>
             </div>
             <div className="flex items-center gap-2">

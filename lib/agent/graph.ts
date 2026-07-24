@@ -102,6 +102,14 @@ Use the thread context above (call get_gmail_message_content only if you need mo
       gmailDraftCreated: Boolean(
         result.resultMeta?.gmailDraftCreated || result.gmailDraftId
       ),
+      gmailDraftId:
+        (typeof result.resultMeta?.gmailDraftId === "string"
+          ? result.resultMeta.gmailDraftId
+          : null) ??
+        (typeof result.gmailDraftId === "string" ? result.gmailDraftId : null),
+      inboxDraftPreview:
+        asDraftPreview(result.reviewDraft) ??
+        asDraftPreview(result.resultMeta?.inboxDraftPreview),
     };
   }
 

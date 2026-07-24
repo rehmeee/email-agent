@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "mcp:start": "bash scripts/start-mcp.sh",
-    "mcp:docker": "docker compose -f docker-compose.mcp.yml --env-file .env up -d"
+    "mcp:docker": "docker compose -f docker-compose.mcp.yml --env-file .env up -d --build",
+    "mcp:docker:logs": "docker compose -f docker-compose.mcp.yml logs -f workspace-mcp",
+    "mcp:image": "bash scripts/build-mcp-image.sh"
   },
   "dependencies": {
     "@langchain/core": "^1.2.1",

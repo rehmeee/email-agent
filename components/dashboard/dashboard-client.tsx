@@ -83,7 +83,7 @@ function buildMetrics(
             ? "None pending"
             : `${draftCount} in Gmail`,
     },
-    { label: "Model", value: "GPT-4o mini", sub: "via OpenRouter" },
+    { label: "Model", value: "DeepSeek V4 Flash", sub: "thinking · high" },
   ];
 }
 
@@ -263,7 +263,7 @@ export function DashboardClient({
 
     void (async () => {
       try {
-        const response = await fetch("/api/gmail/drafts");
+        const response = await fetch("/api/agent/drafts/list");
         const payload = (await response.json()) as {
           drafts?: unknown[];
           error?: string;
