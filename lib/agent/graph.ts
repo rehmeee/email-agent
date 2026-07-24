@@ -11,6 +11,7 @@ import {
   wrapWithLangSmithTrace,
 } from "@/lib/agent/tracing";
 import type { DraftPreview } from "@/lib/drafts/preview";
+import { normalizeDraftAttachments } from "@/lib/drafts/preview";
 
 export type { ChatHistoryItem, MailMindAgentResult } from "@/lib/agent/tracing";
 
@@ -33,6 +34,7 @@ function asDraftPreview(value: unknown): DraftPreview | null {
     gmailThreadId: draft.gmailThreadId,
     inReplyTo: draft.inReplyTo,
     references: draft.references,
+    attachments: normalizeDraftAttachments(draft.attachments),
   };
 }
 

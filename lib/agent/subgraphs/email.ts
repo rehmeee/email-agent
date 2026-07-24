@@ -13,6 +13,7 @@ import { MailMindState, type MailMindStateType } from "@/lib/agent/state";
 import { createProposeDraftTool } from "@/lib/agent/tools/gmail";
 import { hasToolCalls, runToolCalls } from "@/lib/agent/tools/run-tools";
 import type { DraftPreview } from "@/lib/drafts/preview";
+import { normalizeDraftAttachments } from "@/lib/drafts/preview";
 import { formatMemoryForPrompt } from "@/lib/memory/db";
 import { getAgentMemoryCached } from "@/lib/memory/store";
 import { getPersonaProfile } from "@/lib/persona/db";
@@ -107,6 +108,8 @@ Rules:
 - Reply to the LATEST inbound ask. Do not rehash points you already answered in earlier sent messages unless the sender asks again.
 - Scheduling: call get_events for the asked slot AND a nearby same-day window before proposing times. If busy, offer 2–3 real free alternatives (respect working hours in user memory). Do NOT call manage_event — only propose times in the draft. If calendar is empty or the tool fails, say availability could not be confirmed — never invent slots.
 - When drafting needs background info (contacts, proposals, prior notes), use search_drive_files then get_drive_file_content or read_sheet_values. Read at most 1–2 files and summarize — never paste raw file contents into the draft. If nothing found, do not invent.
+- Attachments (high confidence only): before draft_gmail_message, silently ask: does this reply need a file? High if the inbound message asks to send/share/attach a document (report, proposal, invoice, contract, resume). Low for thanks/scheduling/simple replies — text only, no Drive search. Medium/unclear → draft text that asks the sender what to send; do not guess a file.
+- When attaching: search_drive_files by title/filename first (from the ask), one content fallback if needed. 0 matches → say the file could not be found in the draft body (ask sender). 2+ matches → pick nothing; ask in the draft which file. 1 clear match → get_drive_file_download_url then draft_gmail_message with attachments: [{ url, filename }]. Never invent file ids/names. Max 3 attachments. Google Docs/Sheets: use export_format (pdf/xlsx).
 - Call draft_gmail_message with correct thread_id, in_reply_to, and references from the latest inbound message in the thread. Do NOT pass user_google_email — auth is already via the connected Gmail token.
 - draft_gmail_message writes into Gmail → Drafts immediately (do not wait for approval).
 - Follow user memory for names/preferences; follow persona for voice only.
@@ -177,11 +180,23 @@ Calendar / booking (same proactive habit — meetings are not a special mode):
 - If calendar tools fail or return nothing useful, degrade — do not claim the meeting is booked.
 
 Drive:
-- When the task needs background from Drive/Docs/Sheets, search_drive_files then get_drive_file_content or read_sheet_values before claiming nothing exists. At most 1–2 files; summarize into the task. If nothing found, say so — do not invent.
+- Use search_drive_files / get_drive_file_content / read_sheet_values to gather background when useful. Summarize into the task — do not paste raw file contents. If nothing found, say so — do not invent.
+- get_drive_file_download_url is for attaching binaries (chat accept resolves downloads; inbox may call it before draft_gmail_message).
+
+Attachments / "does this draft need a file?" (mandatory before propose_draft):
+- Reason from intent + thread — the user will NOT always say "attach".
+- High confidence (job application → resume/CV; share proposal/invoice/contract/report; inbound ask to send/share a document; user explicitly asked to attach) → search Drive and include attachments on propose_draft.
+- Medium (might need a file, unclear which) → ask once: "Do you want me to attach related files from Drive?" — WAIT. Do not blind-search.
+- Low (meeting follow-up, thanks, FYI, scheduling, simple reply) → text draft only — NO Drive search for files.
+- Search: title/filename first (e.g. resume, CV, "last quarter report"); if empty, one content fallback; then stop and ask for the exact filename (e.g. resume named "rehman"). Never invent ids/names.
+- 0 matches → ask for the Drive filename; do not propose_draft with fake attachments. Prefer waiting when the file is clearly required.
+- 2+ plausible matches → list exact names from search_drive_files and WAIT for the user to pick.
+- 1 clear match → pass attachments: [{ driveFileId, name, exportFormat? }] on propose_draft (ids/names MUST come from tool results). Max 3. Google Docs/Sheets: set exportFormat (pdf/xlsx).
+- Never claim a file is attached unless it is on the proposed draft from real tool ids. Summarizing a file ≠ attaching it.
 
 Drafting (same habit):
 - When the user wants a draft/reply: resolve recipient first; if purpose/subject/body is empty, recover from recent threads with that person. If still empty, ask what to say — do not propose_draft with invented content.
-- When recipient + purpose are clear (or recovered), call propose_draft. Do NOT call draft_gmail_message or send mail yourself.
+- When recipient + purpose are clear (or recovered), and the attachment gate is satisfied (attached, asked, or low/no file needed), call propose_draft. Do NOT call draft_gmail_message or send mail yourself.
 - After propose_draft, ask if the draft is OK or needs changes. The user can thumbs up, or reply in chat (e.g. "looks good", "ok perfect", "make the draft") to save it — do not call propose_draft again for the same approval.
 - Never claim you sent an email.
 - Follow user memory for names/preferences; follow persona only for how the email prose sounds.
@@ -253,6 +268,7 @@ function extractDraftPreviewFromAiToolCall(
         typeof args.in_reply_to === "string" ? args.in_reply_to : undefined,
       references:
         typeof args.references === "string" ? args.references : undefined,
+      attachments: normalizeDraftAttachments(args.attachments),
     };
   }
 

@@ -1,5 +1,9 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { DraftPreview } from "@/lib/drafts/preview";
+import {
+  normalizeDraftAttachments,
+  type DraftAttachment,
+  type DraftPreview,
+} from "@/lib/drafts/preview";
 
 export type MailMindDraftSource = "inbox" | "chat";
 export type MailMindDraftStatus = "active" | "superseded" | "dismissed";
@@ -13,6 +17,7 @@ export type MailMindDraftRecord = {
   to: string;
   subject: string;
   body: string;
+  attachments: DraftAttachment[] | null;
   gmailThreadId: string | null;
   inReplyTo: string | null;
   references: string | null;
@@ -31,6 +36,7 @@ type DraftRow = {
   to: string;
   subject: string;
   body: string;
+  attachments?: DraftAttachment[] | null;
   gmail_thread_id: string | null;
   in_reply_to: string | null;
   references: string | null;
@@ -59,6 +65,7 @@ function mapRow(row: DraftRow): MailMindDraftRecord {
     to: row.to,
     subject: row.subject,
     body: row.body,
+    attachments: normalizeDraftAttachments(row.attachments) ?? null,
     gmailThreadId: row.gmail_thread_id,
     inReplyTo: row.in_reply_to,
     references: row.references,
@@ -79,6 +86,7 @@ export function draftPreviewFromRecord(
     gmailThreadId: record.gmailThreadId ?? undefined,
     inReplyTo: record.inReplyTo ?? undefined,
     references: record.references ?? undefined,
+    attachments: record.attachments ?? undefined,
   };
 }
 
@@ -90,6 +98,7 @@ export async function saveMailMindDraft(input: {
   draft: DraftPreview;
 }): Promise<MailMindDraftRecord | null> {
   const admin = createAdminClient();
+  const attachments = normalizeDraftAttachments(input.draft.attachments) ?? null;
   const { data, error } = await admin
     .from("mailmind_drafts")
     .upsert(
@@ -101,6 +110,7 @@ export async function saveMailMindDraft(input: {
         to: input.draft.to,
         subject: input.draft.subject,
         body: input.draft.body,
+        attachments,
         gmail_thread_id: input.draft.gmailThreadId ?? null,
         in_reply_to: input.draft.inReplyTo ?? null,
         references: input.draft.references ?? null,
@@ -118,6 +128,42 @@ export async function saveMailMindDraft(input: {
         "[mailmind_drafts] table missing — run supabase/migrations/007_mailmind_drafts.sql"
       );
       return null;
+    }
+    // Older DBs without attachments column: retry without it.
+    if (
+      error.message.includes("attachments") &&
+      (error.message.includes("schema cache") ||
+        error.message.includes("does not exist") ||
+        error.message.includes("Could not find"))
+    ) {
+      console.warn(
+        "[mailmind_drafts] attachments column missing — run supabase/migrations/008_mailmind_draft_attachments.sql"
+      );
+      const retry = await admin
+        .from("mailmind_drafts")
+        .upsert(
+          {
+            user_id: input.userId,
+            gmail_draft_id: input.gmailDraftId,
+            source: input.source,
+            source_message_id: input.sourceMessageId ?? null,
+            to: input.draft.to,
+            subject: input.draft.subject,
+            body: input.draft.body,
+            gmail_thread_id: input.draft.gmailThreadId ?? null,
+            in_reply_to: input.draft.inReplyTo ?? null,
+            references: input.draft.references ?? null,
+            status: "active",
+            superseded_by: null,
+          },
+          { onConflict: "user_id,gmail_draft_id" }
+        )
+        .select("*")
+        .single();
+      if (retry.error) {
+        throw new Error(`Failed to save MailMind draft: ${retry.error.message}`);
+      }
+      return mapRow(retry.data as DraftRow);
     }
     throw new Error(`Failed to save MailMind draft: ${error.message}`);
   }

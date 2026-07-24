@@ -118,12 +118,15 @@ Do not explain what you changed. Only call propose_draft.`;
       );
     }
 
-    // Preserve threading from the original MailMind draft when redraft omits them.
+    // Preserve threading / attachments from the original MailMind draft when redraft omits them.
     const nextDraft: DraftPreview = {
       ...proposed,
       gmailThreadId: proposed.gmailThreadId ?? existing.gmailThreadId ?? undefined,
       inReplyTo: proposed.inReplyTo ?? existing.inReplyTo ?? undefined,
       references: proposed.references ?? existing.references ?? undefined,
+      attachments:
+        proposed.attachments ??
+        draftPreviewFromRecord(existing).attachments,
     };
 
     const created = await createGmailDraftViaMcp({

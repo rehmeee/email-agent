@@ -1,6 +1,9 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import type { DraftPreview } from "@/lib/drafts/preview";
+import {
+  normalizeDraftAttachments,
+  type DraftPreview,
+} from "@/lib/drafts/preview";
 import {
   createGmailDraft,
   getGmailMessage,
@@ -139,7 +142,15 @@ export function createProposeDraftTool(input: {
   onProposed?: (draft: DraftPreview) => void;
 }) {
   return tool(
-    async ({ to, subject, body, threadId, inReplyTo, references }) => {
+    async ({
+      to,
+      subject,
+      body,
+      threadId,
+      inReplyTo,
+      references,
+      attachments,
+    }) => {
       const draft: DraftPreview = {
         to,
         subject,
@@ -147,6 +158,7 @@ export function createProposeDraftTool(input: {
         gmailThreadId: sanitizeGmailThreadId(threadId),
         inReplyTo: inReplyTo?.trim() || undefined,
         references: references?.trim() || undefined,
+        attachments: normalizeDraftAttachments(attachments),
       };
 
       input.onProposed?.(draft);
@@ -164,7 +176,7 @@ export function createProposeDraftTool(input: {
     {
       name: "propose_draft",
       description:
-        "Propose a draft email for the user to review in chat. Does NOT create a Gmail draft. Use this whenever the user wants you to write/draft an email or reply.",
+        "Propose a draft email for the user to review in chat. Does NOT create a Gmail draft. Use this whenever the user wants you to write/draft an email or reply. Include attachments only with real Drive file ids from search_drive_files — never invent file ids or names.",
       schema: z.object({
         to: z.string().min(1).describe("Recipient email address"),
         subject: z.string().min(1).describe("Email subject line"),
@@ -184,6 +196,32 @@ export function createProposeDraftTool(input: {
           .string()
           .nullish()
           .describe("References header; defaults to inReplyTo when omitted"),
+        attachments: z
+          .array(
+            z.object({
+              driveFileId: z
+                .string()
+                .min(1)
+                .describe(
+                  "Google Drive file id from search_drive_files — never invent"
+                ),
+              name: z
+                .string()
+                .min(1)
+                .describe("Exact filename from Drive search results"),
+              mimeType: z.string().nullish().describe("MIME type if known"),
+              exportFormat: z
+                .string()
+                .nullish()
+                .describe(
+                  "Export format for Google Docs/Sheets/Slides (e.g. pdf, xlsx)"
+                ),
+            })
+          )
+          .nullish()
+          .describe(
+            "Optional Drive files to attach (max 3). Only when the draft clearly needs a document. Ids/names must come from search_drive_files."
+          ),
       }),
     }
   );

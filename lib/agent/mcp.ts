@@ -20,6 +20,7 @@ const CHAT_TOOL_ALLOWLIST = [
   "query_freebusy",
   "search_drive_files",
   "get_drive_file_content",
+  "get_drive_file_download_url",
   "read_sheet_values",
 ];
 

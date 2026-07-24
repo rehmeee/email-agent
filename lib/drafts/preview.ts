@@ -1,7 +1,16 @@
+export type DraftAttachment = {
+  driveFileId: string;
+  name: string;
+  mimeType?: string;
+  /** For Google Docs/Sheets/Slides export at download time (e.g. pdf, xlsx). */
+  exportFormat?: string;
+};
+
 export type DraftPreview = {
   to: string;
   subject: string;
   body: string;
+  attachments?: DraftAttachment[];
   gmailThreadId?: string;
   inReplyTo?: string;
   references?: string;
@@ -18,6 +27,57 @@ export type ChatDraftMetadata = {
 /** What to do with the next user message while a draft is pending review. */
 export type PendingDraftIntent = "accept" | "revise" | "other";
 
+const MAX_DRAFT_ATTACHMENTS = 3;
+
+/**
+ * Keep only real Drive file ids from tool results — drop empty/fake entries.
+ */
+export function normalizeDraftAttachments(
+  value: unknown
+): DraftAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const out: DraftAttachment[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const driveFileId =
+      typeof row.driveFileId === "string"
+        ? row.driveFileId.trim()
+        : typeof row.file_id === "string"
+          ? row.file_id.trim()
+          : typeof row.fileId === "string"
+            ? row.fileId.trim()
+            : "";
+    const name =
+      typeof row.name === "string"
+        ? row.name.trim()
+        : typeof row.filename === "string"
+          ? row.filename.trim()
+          : "";
+    if (!driveFileId || !name) continue;
+
+    const attachment: DraftAttachment = { driveFileId, name };
+    if (typeof row.mimeType === "string" && row.mimeType.trim()) {
+      attachment.mimeType = row.mimeType.trim();
+    } else if (typeof row.mime_type === "string" && row.mime_type.trim()) {
+      attachment.mimeType = row.mime_type.trim();
+    }
+    if (typeof row.exportFormat === "string" && row.exportFormat.trim()) {
+      attachment.exportFormat = row.exportFormat.trim();
+    } else if (
+      typeof row.export_format === "string" &&
+      row.export_format.trim()
+    ) {
+      attachment.exportFormat = row.export_format.trim();
+    }
+    out.push(attachment);
+    if (out.length >= MAX_DRAFT_ATTACHMENTS) break;
+  }
+
+  return out.length > 0 ? out : undefined;
+}
+
 export function buildDraftReviewReply(options?: { afterFeedback?: boolean }) {
   if (options?.afterFeedback) {
     return "Got it — I'll keep this in mind. Here's the updated draft. Thumbs up to save to Gmail, thumbs down for more feedback, or just reply in chat.";
@@ -26,7 +86,17 @@ export function buildDraftReviewReply(options?: { afterFeedback?: boolean }) {
 }
 
 export function formatDraftPreviewBlock(preview: DraftPreview) {
-  return `To: ${preview.to}\nSubject: ${preview.subject}\n\n${preview.body}`;
+  const lines = [
+    `To: ${preview.to}`,
+    `Subject: ${preview.subject}`,
+  ];
+  if (preview.attachments?.length) {
+    lines.push(
+      `Attachments: ${preview.attachments.map((a) => a.name).join(", ")}`
+    );
+  }
+  lines.push("", preview.body);
+  return lines.join("\n");
 }
 
 const APPROVAL_WORDS =
