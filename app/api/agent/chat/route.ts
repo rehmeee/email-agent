@@ -1,3 +1,13 @@
+import { createGmailDraftViaMcp } from "@/lib/agent/mcp-draft";
+import { saveMailMindDraft } from "@/lib/drafts/db";
+import { resolvePendingDraftIntent } from "@/lib/drafts/intent";
+import {
+  buildDraftReviewReply,
+  formatDraftPreviewBlock,
+  type DraftPreview,
+} from "@/lib/drafts/preview";
+import { getValidGmailAccessToken } from "@/lib/gmail/connection";
+import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { runMailMindAgent, type ChatHistoryItem } from "@/lib/agent/graph";
 import {
@@ -7,17 +17,6 @@ import {
   getChatThreadMessages,
   updateChatMessageMetadata,
 } from "@/lib/chat/threads";
-import {
-  buildDraftReviewReply,
-  formatDraftPreviewBlock,
-  isDraftAcceptMessage,
-  isPendingDraftFeedbackMessage,
-  type DraftPreview,
-} from "@/lib/drafts/preview";
-import { createGmailDraft } from "@/lib/gmail/api";
-import { getValidGmailAccessToken } from "@/lib/gmail/connection";
-import { createClient } from "@/lib/supabase/server";
-
 type ChatRequestBody = {
   message?: string;
   threadId?: string | null;
@@ -69,16 +68,27 @@ export async function POST(request: Request) {
       thread.id
     );
     const pendingDraft = pendingMessage?.metadata?.draft ?? null;
+    const pendingIntent = pendingDraft
+      ? await resolvePendingDraftIntent(message)
+      : null;
 
-    // Natural language accept → create Gmail draft from last pending draft.
-    if (pendingDraft && isDraftAcceptMessage(message)) {
-      const created = await createGmailDraft(accessToken, {
-        to: pendingDraft.to,
-        subject: pendingDraft.subject,
-        body: pendingDraft.body,
-        threadId: pendingDraft.gmailThreadId,
-        inReplyTo: pendingDraft.inReplyTo,
-        references: pendingDraft.references,
+    // Natural language accept → create Gmail draft from last pending draft (MCP).
+    if (pendingDraft && pendingIntent === "accept") {
+      if (!googleEmail) {
+        throw new Error("Connected Gmail address is required to create a draft");
+      }
+
+      const created = await createGmailDraftViaMcp({
+        accessToken,
+        gmailEmail: googleEmail,
+        draft: pendingDraft,
+      });
+
+      await saveMailMindDraft({
+        userId: user.id,
+        gmailDraftId: created.draftId,
+        source: "chat",
+        draft: pendingDraft,
       });
 
       await updateChatMessageMetadata(user.id, pendingMessage!.id, {
@@ -87,8 +97,7 @@ export async function POST(request: Request) {
         gmailDraftId: created.draftId,
       });
 
-      const reply =
-        "Draft saved to Gmail → Drafts. It was not sent.";
+      const reply = "Draft saved to Gmail → Drafts. It was not sent.";
       await addChatMessage(thread.id, "assistant", reply);
 
       return NextResponse.json({
@@ -103,8 +112,8 @@ export async function POST(request: Request) {
       });
     }
 
-    // Natural language remarks → feedback + redraft (no thumbs down required).
-    if (pendingDraft && isPendingDraftFeedbackMessage(message)) {
+    // Explicit change requests → feedback + redraft (no thumbs down required).
+    if (pendingDraft && pendingIntent === "revise") {
       await updateChatMessageMetadata(user.id, pendingMessage!.id, {
         draft: pendingDraft,
         draftStatus: "revised",
@@ -183,9 +192,18 @@ Do not explain what you changed. Only call propose_draft.`;
       });
     }
 
+    // pendingIntent === "other" (or no pending draft): normal chat.
+    // If a draft is still pending, remind the model not to re-propose it.
+    const agentMessage =
+      pendingDraft && pendingIntent === "other"
+        ? `${message}
+
+[Context: A draft is still pending user review (To: ${pendingDraft.to}, Subject: ${pendingDraft.subject}). Do NOT call propose_draft again for that same email unless the user clearly asks for a new/different draft or changes. Answer their new request instead.]`
+        : message;
+
     const result = await runMailMindAgent({
       eventType: "chat",
-      message,
+      message: agentMessage,
       history,
       accessToken,
       gmailEmail: googleEmail,

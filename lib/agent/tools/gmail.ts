@@ -169,19 +169,20 @@ export function createProposeDraftTool(input: {
         to: z.string().min(1).describe("Recipient email address"),
         subject: z.string().min(1).describe("Email subject line"),
         body: z.string().min(1).describe("Plain text body of the draft"),
+        // LLMs often send null for unused optionals; .optional() alone rejects null.
         threadId: z
           .string()
-          .optional()
+          .nullish()
           .describe(
             "Gmail thread id from read_email when replying. Omit for a new email. Never invent or use chat thread UUIDs."
           ),
         inReplyTo: z
           .string()
-          .optional()
+          .nullish()
           .describe("Message-ID header from the email being replied to"),
         references: z
           .string()
-          .optional()
+          .nullish()
           .describe("References header; defaults to inReplyTo when omitted"),
       }),
     }
@@ -227,17 +228,17 @@ export function createGmailDraftTool(
         body: z.string().min(1).describe("Plain text body of the draft"),
         threadId: z
           .string()
-          .optional()
+          .nullish()
           .describe(
             "Gmail thread id from read_email when replying. Omit for a new email. Never invent or use chat thread UUIDs."
           ),
         inReplyTo: z
           .string()
-          .optional()
+          .nullish()
           .describe("Message-ID header from the email being replied to"),
         references: z
           .string()
-          .optional()
+          .nullish()
           .describe("References header; defaults to inReplyTo when omitted"),
       }),
     }

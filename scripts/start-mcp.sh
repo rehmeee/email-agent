@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Start google_workspace_mcp locally for MailMind development.
+# Recommended local MCP for MailMind (no Docker image pull).
 # Requires: uv (brew install uv). Uses GOOGLE_CLIENT_* from .env.
+#
+#   npm run mcp:start
+#   WORKSPACE_MCP_URL=http://localhost:8000/mcp
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,5 +36,5 @@ echo "Point WORKSPACE_MCP_URL at http://localhost:8000/mcp"
 
 exec uvx workspace-mcp \
   --transport streamable-http \
-  --tools gmail drive calendar sheets docs \
+  --tools gmail drive calendar sheets docs contacts \
   --tool-tier extended

@@ -12,7 +12,8 @@ import {
 import { loadThreadContextForReply } from "@/lib/gmail/thread-context";
 import { fetchAndTriageGmailMessage } from "@/lib/gmail/triage";
 import { seedHistoryIdFromProfile } from "@/lib/gmail/watch";
-
+import { saveMailMindDraft } from "@/lib/drafts/db";
+import type { DraftPreview } from "@/lib/drafts/preview";
 function historyIdTooOldError(error: unknown) {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
@@ -100,6 +101,26 @@ export async function processNewGmailMessage(input: {
   const action = result.gmailDraftCreated ? "drafted" : "skipped";
   await markGmailMessageProcessed(input.userId, input.messageId, action);
 
+  const draftPreview = result.inboxDraftPreview as DraftPreview | null | undefined;
+  if (
+    result.gmailDraftCreated &&
+    result.gmailDraftId &&
+    result.gmailDraftId !== "created" &&
+    draftPreview
+  ) {
+    try {
+      await saveMailMindDraft({
+        userId: input.userId,
+        gmailDraftId: result.gmailDraftId,
+        source: "inbox",
+        sourceMessageId: input.messageId,
+        draft: draftPreview,
+      });
+    } catch (persistError) {
+      console.warn("[Gmail Sync] Failed to persist MailMind draft", persistError);
+    }
+  }
+
   return {
     skipped: !result.gmailDraftCreated,
     reason: result.gmailDraftCreated
@@ -107,6 +128,7 @@ export async function processNewGmailMessage(input: {
       : result.reply || "Agent did not create a draft",
     action,
     gmailDraftCreated: Boolean(result.gmailDraftCreated),
+    gmailDraftId: result.gmailDraftId ?? null,
     reply: result.reply,
     triage,
   };

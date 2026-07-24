@@ -5,6 +5,7 @@ const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/contacts.readonly",
 ];
 
 export const REQUIRED_GMAIL_SCOPE_PREFIX = "gmail.readonly";
@@ -43,6 +44,15 @@ function tokenHasDriveReadScope(scopes: string[]) {
   );
 }
 
+function tokenHasContactsReadScope(scopes: string[]) {
+  return scopes.some(
+    (scope) =>
+      scope.includes("contacts.readonly") ||
+      scope.includes("contacts") ||
+      scope.includes("directory.readonly")
+  );
+}
+
 function tokenHasRequiredGmailScopes(scopes: string[]) {
   return (
     tokenHasGmailReadScope(scopes) &&
@@ -50,6 +60,11 @@ function tokenHasRequiredGmailScopes(scopes: string[]) {
     tokenHasCalendarWriteScope(scopes) &&
     tokenHasDriveReadScope(scopes)
   );
+}
+
+/** Optional — enables search_contacts; agent still works via Gmail search without it. */
+export function tokenHasContactsScope(scopes: string[]) {
+  return tokenHasContactsReadScope(scopes);
 }
 
 export async function fetchGoogleTokenScopes(accessToken: string) {

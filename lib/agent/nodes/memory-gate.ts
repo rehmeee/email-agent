@@ -1,5 +1,4 @@
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { z } from "zod";
+import { formatAgentNow } from "@/lib/agent/now";
 import { createLlm } from "@/lib/agent/llm";
 import type { MailMindStateType } from "@/lib/agent/state";
 import {
@@ -11,6 +10,8 @@ import {
   updateAgentMemoryCached,
 } from "@/lib/memory/store";
 import type { MemoryUpdates } from "@/lib/memory/types";
+import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { z } from "zod";
 
 const memoryGateSchema = z.object({
   is_useful: z.boolean(),
@@ -77,6 +78,8 @@ async function classifyMemoryGate(
 ): Promise<MemoryGateResult> {
   const system = `You are MailMind's memory gate (NOT the writing persona).
 
+${formatAgentNow()}
+
 Persona (how emails sound) is separate and is NOT updated here.
 You only maintain standing USER MEMORY as do / dont / facts lines.
 
@@ -85,6 +88,8 @@ SAVE (is_useful=true) when the user sets or CHANGES lasting instructions, e.g.:
 - "keep replies short" → add_do: ["Keep replies short"]
 - "never use emojis" → add_dont: ["Use emojis"]
 - "don't call me Ali, call me Alex" → remove old Ali line(s), add_facts for Alex
+- "my timezone is Asia/Karachi" → add_facts: ["timezone: Asia/Karachi"]
+- "I work 9am–6pm" → add_facts: ["Working hours: 9:00–18:00 local"]
 
 IGNORE (is_useful=false) for one-off tasks, thanks/ok, secrets, or ephemeral chat.
 Require confidence >= 0.7. Prefer short lines. Do not invent persona/tone fields.`;

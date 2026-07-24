@@ -110,7 +110,7 @@ export async function connectGmail() {
   await deleteGmailConnection(user.id);
 
   const gmailScopes =
-    "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email";
+    "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/userinfo.email";
   const callbackUrl = `${appUrl}/auth/callback?next=/dashboard&gmail=linked`;
 
   const { data, error } = await supabase.auth.signInWithOAuth({

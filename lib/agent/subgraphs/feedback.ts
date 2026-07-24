@@ -2,6 +2,7 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { z } from "zod";
 import { createLlm } from "@/lib/agent/llm";
+import { formatAgentNow } from "@/lib/agent/now";
 import { MailMindState, type MailMindStateType } from "@/lib/agent/state";
 import { getPersonaProfile, updatePersonaProfile } from "@/lib/persona/db";
 import {
@@ -86,6 +87,8 @@ async function mergeFeedbackWithLlm(
   draft: { subject?: string; body?: string } | null | undefined
 ) {
   const system = `You update writing-persona learned_rules from a rejected email draft.
+${formatAgentNow()}
+
 Return ONLY JSON with this shape:
 {
   "learned_rules": { "do": string[], "dont": string[] },

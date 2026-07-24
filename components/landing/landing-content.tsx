@@ -56,7 +56,7 @@ const steps = [
   { num: "03", title: "Review & send", desc: "Agent drafts. You stay in control of every send." },
 ];
 
-const logos = ["LangGraph", "OpenRouter", "Gmail API", "Next.js"];
+const logos = ["LangGraph", "DeepSeek", "Gmail API", "Next.js"];
 
 export function LandingContent({
   signInButton,

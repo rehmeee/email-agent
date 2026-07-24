@@ -159,11 +159,10 @@ async function fetchSentViaMcp(state: PersonaAgentStateType) {
 
   try {
     const tools = await getWorkspaceMcpTools(state.accessToken, "persona");
-    const email = state.gmailEmail?.trim();
-    const baseArgs = email ? { user_google_email: email } : {};
 
+    // OAuth 2.1 injects the user from the Bearer token — do not pass
+    // user_google_email (stripped from MCP tool schemas).
     const searchResult = await invokeMcpTool(tools, "search_gmail_messages", {
-      ...baseArgs,
       query: "in:sent",
       page_size: MAX_SENT_SAMPLES,
     });
@@ -186,7 +185,6 @@ async function fetchSentViaMcp(state: PersonaAgentStateType) {
         tools,
         "get_gmail_messages_content_batch",
         {
-          ...baseArgs,
           message_ids: messageIds,
         }
       );
@@ -194,7 +192,6 @@ async function fetchSentViaMcp(state: PersonaAgentStateType) {
       const parts: string[] = [];
       for (const messageId of messageIds.slice(0, 15)) {
         const content = await invokeMcpTool(tools, "get_gmail_message_content", {
-          ...baseArgs,
           message_id: messageId,
         });
         parts.push(`Message ID: ${messageId}\n${content}`);
