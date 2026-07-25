@@ -1,6 +1,8 @@
 import { getWorkspaceMcpTools, invokeMcpTool } from "@/lib/agent/mcp";
+import { AGENT_TOKEN_MIN_TTL_MS } from "@/lib/agent/limits";
 import { downloadDriveFileAsBase64 } from "@/lib/drive/download";
 import type { DraftAttachment, DraftPreview } from "@/lib/drafts/preview";
+import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 
 export type McpDraftCreateResult = {
   draftId: string;
@@ -145,6 +147,7 @@ async function resolveAttachmentsForMcp(
  */
 export async function createGmailDraftViaMcp(input: {
   accessToken: string;
+  userId: string;
   /** Connected Gmail — used for auth via Bearer token only (not an MCP arg). */
   gmailEmail: string;
   draft: DraftPreview;
@@ -153,7 +156,12 @@ export async function createGmailDraftViaMcp(input: {
     throw new Error("Connected Gmail address is required to create a draft");
   }
 
-  const tools = await getWorkspaceMcpTools(input.accessToken, "inbox");
+  const { accessToken } = await getValidGmailAccessToken(input.userId, {
+    minTtlMs: AGENT_TOKEN_MIN_TTL_MS,
+    skipScopeCheck: true,
+  });
+
+  const tools = await getWorkspaceMcpTools(accessToken, "inbox");
 
   // OAuth 2.1: identity comes from the Bearer token — do not pass
   // user_google_email (not in schema; causes "did not match expected schema").
@@ -176,7 +184,7 @@ export async function createGmailDraftViaMcp(input: {
 
   if (input.draft.attachments?.length) {
     args.attachments = await resolveAttachmentsForMcp(
-      input.accessToken,
+      accessToken,
       tools,
       input.draft.attachments
     );

@@ -131,6 +131,7 @@ Do not explain what you changed. Only call propose_draft.`;
 
     const created = await createGmailDraftViaMcp({
       accessToken,
+      userId: user.id,
       gmailEmail: googleEmail,
       draft: nextDraft,
     });

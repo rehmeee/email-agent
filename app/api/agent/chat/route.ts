@@ -80,6 +80,7 @@ export async function POST(request: Request) {
 
       const created = await createGmailDraftViaMcp({
         accessToken,
+        userId: user.id,
         gmailEmail: googleEmail,
         draft: pendingDraft,
       });
@@ -249,9 +250,17 @@ Do not explain what you changed. Only call propose_draft.`;
   } catch (error) {
     const rawMessage =
       error instanceof Error ? error.message : "Agent request failed";
+    const isAbort =
+      (error instanceof Error && error.name === "AbortError") ||
+      /aborted|AbortError|timed? ?out/i.test(rawMessage);
     const errorMessage = rawMessage.includes("insufficient authentication scopes")
       ? "Gmail is missing inbox or draft permissions. Click Reconnect Gmail on the dashboard, approve Gmail access, then try again."
-      : rawMessage;
+      : isAbort
+        ? "This request took too long. Please try again."
+        : rawMessage.includes("Gmail token expired") ||
+            rawMessage.includes("Token refresh failed")
+          ? "Gmail access expired. Click Reconnect Gmail on the dashboard, then try again."
+          : rawMessage;
 
     return NextResponse.json({ error: errorMessage }, { status: 400 });
   }

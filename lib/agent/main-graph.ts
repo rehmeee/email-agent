@@ -1,4 +1,5 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
+import { AGENT_RUN_TIMEOUT_MS } from "@/lib/agent/limits";
 import { memoryGateNode } from "@/lib/agent/nodes/memory-gate";
 import { MailMindState, type MailMindStateType } from "@/lib/agent/state";
 import { createEmailSubgraph } from "@/lib/agent/subgraphs/email";
@@ -52,6 +53,7 @@ export async function invokeMainGraph(input: Partial<MailMindStateType>) {
 
   return graph.invoke(input, {
     recursionLimit: 40,
+    signal: AbortSignal.timeout(AGENT_RUN_TIMEOUT_MS),
     runName: `MailMind:${input.eventType ?? "unknown"}`,
     metadata: {
       userId: input.userId,

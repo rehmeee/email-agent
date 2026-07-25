@@ -5,15 +5,24 @@ import {
 } from "@langchain/core/messages";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { END, START, StateGraph } from "@langchain/langgraph";
+import {
+  AGENT_TOKEN_MIN_TTL_MS,
+  MAX_CONSECUTIVE_TOOL_ERROR_ROUNDS,
+} from "@/lib/agent/limits";
 import { createLlm } from "@/lib/agent/llm";
 import { getWorkspaceMcpTools } from "@/lib/agent/mcp";
 import { parseMcpDraftId } from "@/lib/agent/mcp-draft";
 import { formatAgentNow } from "@/lib/agent/now";
 import { MailMindState, type MailMindStateType } from "@/lib/agent/state";
 import { createProposeDraftTool } from "@/lib/agent/tools/gmail";
-import { hasToolCalls, runToolCalls } from "@/lib/agent/tools/run-tools";
+import {
+  hasToolCalls,
+  isToolErrorContent,
+  runToolCalls,
+} from "@/lib/agent/tools/run-tools";
 import type { DraftPreview } from "@/lib/drafts/preview";
 import { normalizeDraftAttachments } from "@/lib/drafts/preview";
+import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 import { formatMemoryForPrompt } from "@/lib/memory/db";
 import { getAgentMemoryCached } from "@/lib/memory/store";
 import { getPersonaProfile } from "@/lib/persona/db";
@@ -82,7 +91,8 @@ Hard rules:
 - Never invent free/busy, email addresses, file contents, commitments, or "I checked…" claims.
 - Never call write tools (manage_event, propose_draft, draft_gmail_message) in the same turn as a blocking clarify — reply in text and wait.
 - If tools return nothing useful or fail: degrade — admit the gap, ask briefly, or work only from known facts. Prefer an honest thin reply over a confident wrong one.
-- When the ask is already complete and clear, act without unnecessary questions.`;
+- When the ask is already complete and clear, act without unnecessary questions.
+- If a tool returns "Tool error [timeout]", "Tool error [auth]", or "Tool error [unavailable]": do NOT invent success. Explain the problem in plain language and tell the user they can retry. Do not spam the same failing tool again unless the error looks clearly transient.`;
 
 function buildNewEmailSystemPrompt(state: MailMindStateType) {
   return `You are MailMind running in background inbox mode (no human approval step).
@@ -209,18 +219,30 @@ async function toolsForEvent(
   handlers: {
     onProposed?: (draft: DraftPreview) => void;
   }
-): Promise<StructuredToolInterface[]> {
+): Promise<{ tools: StructuredToolInterface[]; accessToken: string }> {
+  // Refresh before each MCP client build if TTL < 5 minutes.
+  const { accessToken } = await getValidGmailAccessToken(state.userId, {
+    minTtlMs: AGENT_TOKEN_MIN_TTL_MS,
+    skipScopeCheck: true,
+  });
+
   if (state.eventType === "new_email") {
-    return getWorkspaceMcpTools(state.accessToken, "inbox");
+    return {
+      tools: await getWorkspaceMcpTools(accessToken, "inbox"),
+      accessToken,
+    };
   }
 
-  const mcpTools = await getWorkspaceMcpTools(state.accessToken, "chat");
-  return [
-    ...mcpTools,
-    createProposeDraftTool({
-      onProposed: handlers.onProposed,
-    }),
-  ];
+  const mcpTools = await getWorkspaceMcpTools(accessToken, "chat");
+  return {
+    tools: [
+      ...mcpTools,
+      createProposeDraftTool({
+        onProposed: handlers.onProposed,
+      }),
+    ],
+    accessToken,
+  };
 }
 
 function draftCreatedFromToolMessages(messages: BaseMessage[]) {
@@ -278,26 +300,38 @@ function extractDraftPreviewFromAiToolCall(
 async function callModel(state: MailMindStateType) {
   const isNewEmail = state.eventType === "new_email";
   let reviewDraft = state.reviewDraft ?? null;
+  const disableTools =
+    (state.consecutiveToolErrors ?? 0) >= MAX_CONSECUTIVE_TOOL_ERROR_ROUNDS;
 
-  const tools = await toolsForEvent(state, {
-    onProposed: (draft) => {
-      reviewDraft = draft;
-    },
-  });
+  let accessToken = state.accessToken;
+  const baseLlm = createLlm();
 
-  const llm = createLlm().bindTools(tools);
   const system = isNewEmail
     ? buildNewEmailSystemPrompt(state)
     : buildChatSystemPrompt(state);
+  const systemWithCap = disableTools
+    ? `${system}\n\nTools failed repeatedly. Do NOT call tools. Explain the problem to the user in plain language and tell them they can retry.`
+    : system;
 
-  const response = await llm.invoke([
-    new SystemMessage(system),
-    ...state.messages,
-  ]);
+  const messages = [new SystemMessage(systemWithCap), ...state.messages];
+
+  let response;
+  if (disableTools) {
+    response = await baseLlm.invoke(messages);
+  } else {
+    const loaded = await toolsForEvent(state, {
+      onProposed: (draft) => {
+        reviewDraft = draft;
+      },
+    });
+    accessToken = loaded.accessToken;
+    response = await baseLlm.bindTools(loaded.tools).invoke(messages);
+  }
 
   return {
     messages: [response],
     reviewDraft,
+    accessToken,
   };
 }
 
@@ -308,13 +342,20 @@ async function runTools(state: MailMindStateType) {
   let reviewDraft = state.reviewDraft ?? null;
   const inboxDraftPreview = extractDraftPreviewFromAiToolCall(last);
 
-  const tools = await toolsForEvent(state, {
+  const { tools, accessToken } = await toolsForEvent(state, {
     onProposed: (draft) => {
       reviewDraft = draft;
     },
   });
 
   const toolMessages = await runToolCalls(last, tools);
+  const allErrored =
+    toolMessages.length > 0 &&
+    toolMessages.every((message) => isToolErrorContent(message.content));
+  const consecutiveToolErrors = allErrored
+    ? (state.consecutiveToolErrors ?? 0) + 1
+    : 0;
+
   const createdDraftId =
     state.eventType === "new_email"
       ? draftCreatedFromToolMessages(toolMessages) ?? state.gmailDraftId
@@ -322,6 +363,8 @@ async function runTools(state: MailMindStateType) {
 
   return {
     messages: toolMessages,
+    accessToken,
+    consecutiveToolErrors,
     reviewDraft:
       state.eventType === "new_email" && inboxDraftPreview
         ? inboxDraftPreview
