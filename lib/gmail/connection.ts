@@ -1,3 +1,4 @@
+import { AGENT_TOKEN_MIN_TTL_MS } from "@/lib/agent/limits";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const GMAIL_SCOPES = [
@@ -370,11 +371,21 @@ async function refreshAccessToken(refreshToken: string) {
   };
 }
 
+export type GetValidGmailAccessTokenOptions = {
+  skipScopeCheck?: boolean;
+  /**
+   * Refresh when `token_expires_at` is missing or within this many ms.
+   * Defaults to 5 minutes so MCP / long agent runs keep a usable Bearer.
+   */
+  minTtlMs?: number;
+};
+
 export async function getValidGmailAccessToken(
   userId: string,
-  options?: { skipScopeCheck?: boolean }
+  options?: GetValidGmailAccessTokenOptions
 ): Promise<GmailTokens> {
   const admin = createAdminClient();
+  const minTtlMs = options?.minTtlMs ?? AGENT_TOKEN_MIN_TTL_MS;
 
   const { data, error } = await admin
     .from("gmail_connections")
@@ -389,10 +400,10 @@ export async function getValidGmailAccessToken(
   const expiresAt = data.token_expires_at
     ? new Date(data.token_expires_at)
     : null;
-  const isExpired =
-    !expiresAt || expiresAt.getTime() <= Date.now() + 60_000;
+  const needsRefresh =
+    !expiresAt || expiresAt.getTime() <= Date.now() + minTtlMs;
 
-  if (!isExpired) {
+  if (!needsRefresh) {
     if (!options?.skipScopeCheck) {
       await assertGmailScopes(data.access_token);
     }

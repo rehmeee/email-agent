@@ -53,6 +53,14 @@ export const MailMindState = Annotation.Root({
     reducer: (_left, right) => right,
     default: () => null,
   }),
+  /**
+   * Consecutive run_tools rounds where every tool result was an error.
+   * After MAX_CONSECUTIVE_TOOL_ERROR_ROUNDS, call_model runs without tools.
+   */
+  consecutiveToolErrors: Annotation<number>({
+    reducer: (_left, right) => right ?? 0,
+    default: () => 0,
+  }),
   reply: Annotation<string>({
     reducer: (_left, right) => right ?? "",
     default: () => "",
@@ -62,5 +70,4 @@ export const MailMindState = Annotation.Root({
     default: () => ({}),
   }),
 });
-
 export type MailMindStateType = typeof MailMindState.State;

@@ -1,11 +1,13 @@
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import { AGENT_TOKEN_MIN_TTL_MS } from "@/lib/agent/limits";
 import { createLlm } from "@/lib/agent/llm";
 import { getWorkspaceMcpTools, invokeMcpTool } from "@/lib/agent/mcp";
 import {
   type AgentTraceContext,
   isLangSmithTracingEnabled,
 } from "@/lib/agent/tracing";
+import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 import {
   markPersonaFailed,
   savePersonaProfile,
@@ -158,7 +160,11 @@ async function fetchSentViaMcp(state: PersonaAgentStateType) {
   await setPersonaBuilding(state.userId);
 
   try {
-    const tools = await getWorkspaceMcpTools(state.accessToken, "persona");
+    const { accessToken } = await getValidGmailAccessToken(state.userId, {
+      minTtlMs: AGENT_TOKEN_MIN_TTL_MS,
+      skipScopeCheck: true,
+    });
+    const tools = await getWorkspaceMcpTools(accessToken, "persona");
 
     // OAuth 2.1 injects the user from the Bearer token — do not pass
     // user_google_email (stripped from MCP tool schemas).

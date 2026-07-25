@@ -51,6 +51,7 @@ export async function POST(request: Request) {
 
     const created = await createGmailDraftViaMcp({
       accessToken,
+      userId: user.id,
       gmailEmail: googleEmail,
       draft: body.draft,
     });

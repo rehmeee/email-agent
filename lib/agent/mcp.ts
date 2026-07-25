@@ -3,6 +3,7 @@ import {
   DynamicStructuredTool,
   type StructuredToolInterface,
 } from "@langchain/core/tools";
+import { TOOL_CALL_TIMEOUT_MS } from "@/lib/agent/limits";
 
 /**
  * Tools the chat agent may call. `manage_event` is chat-only for booking:
@@ -132,8 +133,9 @@ function wrapMcpToolForOauth21(
  *
  * The server runs in external OAuth 2.1 provider mode: it stores no tokens
  * and expects the user's Google access token as a Bearer header on every
- * request. Callers must pass a fresh token from getValidGmailAccessToken.
- * A new client is created per run so tokens are never shared across users.
+ * request. Callers must pass a fresh token from getValidGmailAccessToken
+ * (refresh when TTL < 5 minutes). A new client is created per call so
+ * tokens are never shared across users.
  */
 export async function getWorkspaceMcpTools(
   accessToken: string,
@@ -149,6 +151,7 @@ export async function getWorkspaceMcpTools(
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
+        defaultToolTimeout: TOOL_CALL_TIMEOUT_MS,
       },
     },
   });
@@ -169,6 +172,23 @@ export async function invokeMcpTool(
   if (!tool) {
     throw new Error(`MCP tool not available: ${name}`);
   }
-  const result = await tool.invoke(sanitizeMcpToolArgs(args));
-  return typeof result === "string" ? result : JSON.stringify(result);
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      tool.invoke(sanitizeMcpToolArgs(args)),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `timed out after ${Math.round(TOOL_CALL_TIMEOUT_MS / 1000)}s`
+            )
+          );
+        }, TOOL_CALL_TIMEOUT_MS);
+      }),
+    ]);
+    return typeof result === "string" ? result : JSON.stringify(result);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
