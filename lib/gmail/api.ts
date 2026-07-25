@@ -8,7 +8,8 @@ type GmailMessageListResponse = {
 
 type GmailMessagePart = {
   mimeType?: string;
-  body?: { data?: string };
+  filename?: string;
+  body?: { data?: string; attachmentId?: string };
   parts?: GmailMessagePart[];
 };
 
@@ -63,6 +64,55 @@ function extractPlainText(payload?: GmailMessageResponse["payload"]): string {
   }
 
   return "";
+}
+
+/**
+ * Collect attachment filenames from a Gmail message payload (nested multipart).
+ * Skips bare text/html parts that have no filename.
+ */
+export function extractAttachmentNames(
+  payload?: GmailMessageResponse["payload"] | GmailMessagePart
+): string[] {
+  if (!payload) return [];
+
+  const names: string[] = [];
+  const seen = new Set<string>();
+
+  function walk(part: GmailMessagePart | GmailMessageResponse["payload"]) {
+    if (!part) return;
+
+    const filename =
+      "filename" in part && typeof part.filename === "string"
+        ? part.filename.trim()
+        : "";
+    const hasAttachmentId = Boolean(
+      "body" in part && part.body && "attachmentId" in part.body
+        ? part.body.attachmentId
+        : undefined
+    );
+
+    if (filename && (hasAttachmentId || !isInlineTextPart(part.mimeType))) {
+      const key = filename.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        names.push(filename);
+      }
+    }
+
+    const nested = "parts" in part ? part.parts : undefined;
+    if (nested) {
+      for (const child of nested) walk(child);
+    }
+  }
+
+  walk(payload);
+  return names;
+}
+
+function isInlineTextPart(mimeType?: string) {
+  if (!mimeType) return false;
+  const lower = mimeType.toLowerCase();
+  return lower === "text/plain" || lower === "text/html" || lower === "multipart/alternative" || lower.startsWith("multipart/");
 }
 
 async function gmailFetch<T>(
@@ -306,6 +356,7 @@ export async function getGmailMessage(
     messageIdHeader: string;
     to: string;
     replyToEmail: string;
+    attachmentNames: string[];
   }
 >;
 export async function getGmailMessage(
@@ -339,6 +390,7 @@ export async function getGmailMessage(
     messageIdHeader: getHeader(headers, "Message-ID"),
     to: getHeader(headers, "To"),
     replyToEmail: parseEmailAddress(summary.from),
+    attachmentNames: extractAttachmentNames(message.payload),
   };
 }
 
@@ -355,6 +407,8 @@ export type GmailThreadMessage = {
   replyToEmail: string;
   labelIds: string[];
   isSent: boolean;
+  /** Filenames of MIME attachments on this message (if any). */
+  attachmentNames: string[];
 };
 
 type GmailThreadResponse = {
@@ -383,6 +437,7 @@ function toThreadMessage(message: GmailMessageResponse): GmailThreadMessage {
     replyToEmail: parseEmailAddress(summary.from),
     labelIds,
     isSent: labelIds.includes("SENT"),
+    attachmentNames: extractAttachmentNames(message.payload),
   };
 }
 

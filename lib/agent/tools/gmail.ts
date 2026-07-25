@@ -176,11 +176,16 @@ export function createProposeDraftTool(input: {
     {
       name: "propose_draft",
       description:
-        "Propose a draft email for the user to review in chat. Does NOT create a Gmail draft. Use this whenever the user wants you to write/draft an email or reply. Include attachments only with real Drive file ids from search_drive_files — never invent file ids or names.",
+        "Propose a draft email for the user to review in chat. Does NOT create a Gmail draft. Use this whenever the user wants you to write/draft an email or reply. Default file delivery is a real attachment (Drive file ids from search_drive_files) — never invent ids/names. Only put a Drive view link in the body (and omit attachments) when the user explicitly asked for a link.",
       schema: z.object({
         to: z.string().min(1).describe("Recipient email address"),
         subject: z.string().min(1).describe("Email subject line"),
-        body: z.string().min(1).describe("Plain text body of the draft"),
+        body: z
+          .string()
+          .min(1)
+          .describe(
+            "Plain text body of the draft. Do not include Drive/download URLs unless the user asked for a link."
+          ),
         // LLMs often send null for unused optionals; .optional() alone rejects null.
         threadId: z
           .string()
@@ -220,7 +225,7 @@ export function createProposeDraftTool(input: {
           )
           .nullish()
           .describe(
-            "Optional Drive files to attach (max 3). Only when the draft clearly needs a document. Ids/names must come from search_drive_files."
+            "Drive files to attach as a copy (max 3). Default when sending a document. Omit when the user asked for a link only. Ids/names must come from search_drive_files (after checking thread Attachments: for an already-sent match)."
           ),
       }),
     }

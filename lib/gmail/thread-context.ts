@@ -40,6 +40,11 @@ export function formatThreadForPrompt(
     const role = message.isSent ? "YOU (sent)" : "THEM";
     const marker = isLatest ? " [LATEST — reply to this]" : "";
 
+    const attachmentLine =
+      message.attachmentNames.length > 0
+        ? `Attachments: ${message.attachmentNames.join(", ")}`
+        : "Attachments: (none)";
+
     return [
       `--- Message ${index + 1} (${role})${marker} ---`,
       `id: ${message.id}`,
@@ -49,6 +54,7 @@ export function formatThreadForPrompt(
       `Date: ${message.date}`,
       `Subject: ${message.subject}`,
       `Message-ID: ${message.messageIdHeader || "(none)"}`,
+      attachmentLine,
       `Body:`,
       truncateBody(message.body),
     ].join("\n");
@@ -114,6 +120,7 @@ export async function loadThreadContextForReply(
       replyToEmail: latest.replyToEmail,
       labelIds: [],
       isSent: false,
+      attachmentNames: latest.attachmentNames ?? [],
     };
 
     return {
