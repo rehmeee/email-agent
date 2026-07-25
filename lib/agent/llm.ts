@@ -113,13 +113,19 @@ class DeepSeekCompletions extends ChatOpenAICompletions {
   }
 }
 
-export function createLlm() {
+export type CreateLlmOptions = {
+  /** Override env default. Use false for simple JSON classification. */
+  thinking?: boolean;
+};
+
+export function createLlm(options?: CreateLlmOptions) {
   const apiKey = process.env.DEEPSEEK_API_KEY?.trim();
   const model = process.env.DEEPSEEK_MODEL?.trim() ?? "deepseek-v4-flash";
   const reasoningEffort =
     process.env.DEEPSEEK_REASONING_EFFORT?.trim() ?? "high";
-  const thinkingEnabled =
+  const envThinkingEnabled =
     (process.env.DEEPSEEK_THINKING?.trim() ?? "enabled") !== "disabled";
+  const thinkingEnabled = options?.thinking ?? envThinkingEnabled;
 
   if (!apiKey) {
     throw new Error("Missing DEEPSEEK_API_KEY");
