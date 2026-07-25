@@ -380,7 +380,26 @@ export async function getWorkspaceMcpTools(
   });
 
   const allowlist = allowlistFor(agent);
-  const tools = await client.getTools();
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let tools: StructuredToolInterface[];
+  try {
+    tools = await Promise.race([
+      client.getTools(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `MCP getTools timed out after ${Math.round(TOOL_CALL_TIMEOUT_MS / 1000)}s`
+            )
+          );
+        }, TOOL_CALL_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
   return tools
     .filter((tool) => allowlist.includes(tool.name))
     .map(wrapMcpToolForOauth21) as StructuredToolInterface[];

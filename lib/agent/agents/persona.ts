@@ -24,6 +24,8 @@ import { traceable } from "langsmith/traceable";
 const MIN_SENT_SAMPLES = 5;
 const MAX_SENT_SAMPLES = 40;
 const MAX_BODY_CHARS = 1000;
+/** Gmail batch content fetches stay small so each tool call finishes under TOOL_CALL_TIMEOUT_MS. */
+const BATCH_CHUNK_SIZE = 10;
 
 export type SentMailSample = {
   id: string;
@@ -73,43 +75,70 @@ function extractJsonObject(text: string) {
   return JSON.parse(raw.slice(start, end + 1)) as unknown;
 }
 
-function extractMessageIds(searchResult: string): string[] {
-  const ids = new Set<string>();
-
+/**
+ * Unwrap MCP content-block JSON so we parse the human-readable search text,
+ * not nested metadata that can contain unrelated ids.
+ */
+function mcpResultText(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return raw;
+  }
   try {
-    const parsed = JSON.parse(searchResult) as unknown;
-    const collect = (value: unknown) => {
-      if (!value || typeof value !== "object") return;
-      if (Array.isArray(value)) {
-        for (const item of value) collect(item);
-        return;
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return raw;
+    }
+    const obj = parsed as Record<string, unknown>;
+    if (typeof obj.text === "string" && obj.text.trim()) {
+      return obj.text;
+    }
+    const structured = obj.structuredContent;
+    if (structured && typeof structured === "object" && !Array.isArray(structured)) {
+      const result = (structured as Record<string, unknown>).result;
+      if (typeof result === "string" && result.trim()) {
+        return result;
       }
-      const obj = value as Record<string, unknown>;
-      if (typeof obj.id === "string" && obj.id.length > 5) {
-        ids.add(obj.id);
-      }
-      if (typeof obj.message_id === "string" && !obj.message_id.includes("@")) {
-        ids.add(obj.message_id);
-      }
-      for (const nested of Object.values(obj)) collect(nested);
-    };
-    collect(parsed);
+    }
   } catch {
-    // fall through to regex
+    // keep raw
+  }
+  return raw;
+}
+
+/**
+ * Sent search text lists both Message ID and Thread ID. Only Message IDs are
+ * valid for get_gmail_messages_content_batch — Thread IDs must never be mixed in.
+ */
+function extractMessageIds(searchResult: string): string[] {
+  const text = mcpResultText(searchResult);
+  const ids: string[] = [];
+  const seen = new Set<string>();
+
+  for (const match of text.matchAll(/\bMessage ID:\s*([a-zA-Z0-9_-]+)/gi)) {
+    const id = match[1];
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+    if (ids.length >= MAX_SENT_SAMPLES) break;
   }
 
-  for (const match of searchResult.matchAll(
-    /\b(?:message[_ ]?id|id)["'\s:=]+([a-zA-Z0-9_-]{6,})\b/gi
-  )) {
-    ids.add(match[1]);
-  }
+  return ids;
+}
 
-  // Gmail API ids are typically alphanumeric
-  for (const match of searchResult.matchAll(/\b([a-fA-F0-9]{10,})\b/g)) {
-    ids.add(match[1]);
-  }
+function isSoftFetchError(error: unknown): boolean {
+  const message = errorMessage(error);
+  return /timed out|timeout|unavailable|ECONNRESET|ETIMEDOUT|fetch failed|network/i.test(
+    message
+  );
+}
 
-  return [...ids].slice(0, MAX_SENT_SAMPLES);
+function chunkIds<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
 }
 
 function parseBatchMessages(
@@ -117,29 +146,28 @@ function parseBatchMessages(
   fallbackIds: string[]
 ): SentMailSample[] {
   const samples: SentMailSample[] = [];
+  const text = mcpResultText(batchResult);
 
-  // Prefer splitting on common MCP batch separators
-  const chunks = batchResult
-    .split(/\n(?=---\s*Message|Message ID:|📧|### Message)/i)
+  // MCP batch format: one block per "Message ID:" line (not RFC Message-ID headers).
+  const chunks = text
+    .split(/\n(?=Message ID:)/i)
     .map((chunk) => chunk.trim())
-    .filter(Boolean);
+    .filter((chunk) => /\bMessage ID:\s*[a-zA-Z0-9_-]+/i.test(chunk));
 
-  const blocks = chunks.length > 1 ? chunks : [batchResult];
+  const blocks = chunks.length > 0 ? chunks : [text];
 
   for (let index = 0; index < blocks.length; index += 1) {
     const block = blocks[index];
-    const idMatch =
-      block.match(/Message ID:\s*([a-zA-Z0-9_-]+)/i) ||
-      block.match(/\bid["'\s:=]+([a-zA-Z0-9_-]{6,})/i);
-    const subjectMatch = block.match(/Subject:\s*(.+)/i);
-    const toMatch =
-      block.match(/^To:\s*(.+)$/im) || block.match(/\bTo:\s*(.+)/i);
-    const dateMatch = block.match(/Date:\s*(.+)/i);
+    const idMatch = block.match(/\bMessage ID:\s*([a-zA-Z0-9_-]+)/i);
+    const subjectMatch = block.match(/^Subject:\s*(.+)$/im);
+    const toMatch = block.match(/^To:\s*(.+)$/im);
+    const dateMatch = block.match(/^Date:\s*(.+)$/im);
     const bodyMatch =
-      block.match(/---\s*BODY\s*---\s*([\s\S]*?)(?=---|\n📎|$)/i) ||
-      block.match(/Body:\s*([\s\S]+)/i);
+      block.match(/---\s*BODY\s*---\s*([\s\S]*?)(?=\n---\s*\n|\n📎|$)/i) ||
+      block.match(/^Body:\s*([\s\S]+)/im);
 
-    let body = (bodyMatch?.[1] ?? block).trim();
+    let body = (bodyMatch?.[1] ?? "").trim();
+    if (!body) continue;
     if (body.length > MAX_BODY_CHARS) {
       body = `${body.slice(0, MAX_BODY_CHARS)}…`;
     }
@@ -153,7 +181,7 @@ function parseBatchMessages(
     });
   }
 
-  return samples.filter((sample) => sample.body.length > 20).slice(0, MAX_SENT_SAMPLES);
+  return samples.filter((sample) => sample.body.length > 5).slice(0, MAX_SENT_SAMPLES);
 }
 
 async function fetchSentViaMcp(state: PersonaAgentStateType) {
@@ -166,12 +194,28 @@ async function fetchSentViaMcp(state: PersonaAgentStateType) {
     });
     const tools = await getWorkspaceMcpTools(accessToken, "persona");
 
+    // Sent mailbox only — never inbox / all mail.
     // OAuth 2.1 injects the user from the Bearer token — do not pass
     // user_google_email (stripped from MCP tool schemas).
-    const searchResult = await invokeMcpTool(tools, "search_gmail_messages", {
-      query: "in:sent",
-      page_size: MAX_SENT_SAMPLES,
-    });
+    let searchResult: string;
+    try {
+      searchResult = await invokeMcpTool(tools, "search_gmail_messages", {
+        query: "in:sent",
+        page_size: MAX_SENT_SAMPLES,
+      });
+    } catch (error) {
+      if (isSoftFetchError(error)) {
+        return {
+          sentSamples: [] as SentMailSample[],
+          resultMeta: {
+            personaSourceSampleCount: 0,
+            personaFetchPartial: true,
+            personaFetchError: errorMessage(error),
+          },
+        };
+      }
+      throw error;
+    }
 
     const messageIds = extractMessageIds(searchResult);
     if (messageIds.length === 0) {
@@ -181,34 +225,67 @@ async function fetchSentViaMcp(state: PersonaAgentStateType) {
       };
     }
 
-    let batchResult: string;
+    const batchParts: string[] = [];
+    const fetchedIds: string[] = [];
+    let partial = false;
+    let fetchError: string | undefined;
     const batchTool = tools.find(
       (tool) => tool.name === "get_gmail_messages_content_batch"
     );
 
     if (batchTool) {
-      batchResult = await invokeMcpTool(
-        tools,
-        "get_gmail_messages_content_batch",
-        {
-          message_ids: messageIds,
+      for (const chunk of chunkIds(messageIds, BATCH_CHUNK_SIZE)) {
+        try {
+          const chunkResult = await invokeMcpTool(
+            tools,
+            "get_gmail_messages_content_batch",
+            { message_ids: chunk }
+          );
+          batchParts.push(mcpResultText(chunkResult));
+          fetchedIds.push(...chunk);
+        } catch (error) {
+          partial = true;
+          fetchError = errorMessage(error);
+          if (!isSoftFetchError(error) && batchParts.length === 0) {
+            throw error;
+          }
+          break;
         }
-      );
-    } else {
-      const parts: string[] = [];
-      for (const messageId of messageIds.slice(0, 15)) {
-        const content = await invokeMcpTool(tools, "get_gmail_message_content", {
-          message_id: messageId,
-        });
-        parts.push(`Message ID: ${messageId}\n${content}`);
       }
-      batchResult = parts.join("\n\n---\n\n");
+    } else {
+      for (const messageId of messageIds) {
+        try {
+          const content = await invokeMcpTool(tools, "get_gmail_message_content", {
+            message_id: messageId,
+          });
+          batchParts.push(
+            `Message ID: ${messageId}\n${mcpResultText(content)}`
+          );
+          fetchedIds.push(messageId);
+        } catch (error) {
+          partial = true;
+          fetchError = errorMessage(error);
+          if (!isSoftFetchError(error) && batchParts.length === 0) {
+            throw error;
+          }
+          break;
+        }
+      }
     }
 
-    const samples = parseBatchMessages(batchResult, messageIds);
+    const batchResult = batchParts.join("\n\n---\n\n");
+    const samples =
+      batchResult.length > 0
+        ? parseBatchMessages(batchResult, fetchedIds)
+        : [];
+
     return {
       sentSamples: samples,
-      resultMeta: { personaSourceSampleCount: samples.length },
+      resultMeta: {
+        personaSourceSampleCount: samples.length,
+        ...(partial ? { personaFetchPartial: true } : {}),
+        ...(fetchError ? { personaFetchError: fetchError } : {}),
+      },
     };
   } catch (error) {
     await markPersonaFailed(state.userId, errorMessage(error));
