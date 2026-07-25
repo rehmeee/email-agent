@@ -4,6 +4,7 @@ import {
   type DraftAttachment,
   type DraftPreview,
 } from "@/lib/drafts/preview";
+import { incrementDriveFileDraftUseCounts } from "@/lib/drive/summaries";
 
 export type MailMindDraftSource = "inbox" | "chat";
 export type MailMindDraftStatus = "active" | "superseded" | "dismissed";
@@ -168,7 +169,21 @@ export async function saveMailMindDraft(input: {
     throw new Error(`Failed to save MailMind draft: ${error.message}`);
   }
 
-  return mapRow(data as DraftRow);
+  const record = mapRow(data as DraftRow);
+  if (attachments?.length) {
+    await incrementDriveFileDraftUseCounts(
+      input.userId,
+      attachments.map((item) => item.driveFileId)
+    ).catch((incrementError) => {
+      console.warn(
+        "[mailmind_drafts] drive use-count increment failed:",
+        incrementError instanceof Error
+          ? incrementError.message
+          : incrementError
+      );
+    });
+  }
+  return record;
 }
 
 export async function listActiveMailMindDrafts(
