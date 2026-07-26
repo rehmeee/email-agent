@@ -293,8 +293,20 @@ function resultToString(result: unknown): string {
 }
 
 /**
+ * Call the MCP tool implementation directly (tool.func), not tool.invoke.
+ * invoke() nests a second DynamicStructuredTool run in LangSmith for every call.
+ */
+async function callMcpToolFunc(
+  tool: DynamicStructuredTool,
+  args: Record<string, unknown>
+): Promise<string> {
+  const result = await tool.func(args);
+  return resultToString(result);
+}
+
+/**
  * Wrap an MCP tool so LLMs may still pass injected args / nulls without
- * failing client-side schema validation; we strip them before invoke.
+ * failing client-side schema validation; we strip them before the MCP call.
  * search_drive_files: name contains first, then fullText if empty.
  */
 function wrapMcpToolForOauth21(
@@ -314,14 +326,13 @@ function wrapMcpToolForOauth21(
     description: tool.description,
     schema: looseSchema,
     metadata: tool.metadata,
-    func: async (args, _runManager, config) => {
+    func: async (args) => {
       const sanitized = sanitizeMcpToolArgs(
         (args ?? {}) as Record<string, unknown>
       );
 
       if (tool.name !== "search_drive_files") {
-        const result = await tool.invoke(sanitized, config);
-        return resultToString(result);
+        return callMcpToolFunc(tool, sanitized);
       }
 
       const query =
@@ -330,18 +341,17 @@ function wrapMcpToolForOauth21(
       // Structured Drive q: single call (no name→content fallback).
       if (query && isStructuredDriveQuery(query)) {
         const structured = normalizeDriveSearchArgs(sanitized, "name");
-        const result = await tool.invoke(structured, config);
-        return resultToString(result);
+        return callMcpToolFunc(tool, structured);
       }
 
       const nameArgs = normalizeDriveSearchArgs(sanitized, "name");
-      const nameResult = resultToString(await tool.invoke(nameArgs, config));
+      const nameResult = await callMcpToolFunc(tool, nameArgs);
       if (!isEmptyDriveSearchResult(nameResult)) {
         return nameResult;
       }
 
       const textArgs = normalizeDriveSearchArgs(sanitized, "fullText");
-      const textResult = resultToString(await tool.invoke(textArgs, config));
+      const textResult = await callMcpToolFunc(tool, textArgs);
       if (isEmptyDriveSearchResult(textResult)) {
         return textResult;
       }

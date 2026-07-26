@@ -29,6 +29,16 @@ const memoryGateSchema = z.object({
 
 type MemoryGateResult = z.infer<typeof memoryGateSchema>;
 
+const SKIP_RESULT: MemoryGateResult = {
+  is_useful: false,
+  confidence: 0,
+  reason: "not_durable_or_unparseable",
+  add_do: null,
+  add_dont: null,
+  add_facts: null,
+  remove: null,
+};
+
 function latestHumanText(state: MailMindStateType) {
   const lastUser = [...(state.messages ?? [])]
     .reverse()
@@ -43,15 +53,17 @@ function errorMessage(error: unknown) {
   return String(error);
 }
 
-function extractJsonObject(text: string) {
+function extractJsonObject(text: string): unknown | null {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const raw = fenced?.[1]?.trim() ?? text.trim();
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("No JSON object found in model response");
+  if (start === -1 || end === -1 || end <= start) return null;
+  try {
+    return JSON.parse(raw.slice(start, end + 1)) as unknown;
+  } catch {
+    return null;
   }
-  return JSON.parse(raw.slice(start, end + 1)) as unknown;
 }
 
 function toUpdates(extracted: MemoryGateResult): MemoryUpdates {
@@ -76,12 +88,15 @@ async function classifyMemoryGate(
   userText: string,
   currentMemoryText: string
 ): Promise<MemoryGateResult> {
-  const system = `You are MailMind's memory gate (NOT the writing persona).
+  const system = `You are MailMind's memory gate (NOT the writing persona, NOT an email agent).
 
 ${formatAgentNow()}
 
 Persona (how emails sound) is separate and is NOT updated here.
 You only maintain standing USER MEMORY as do / dont / facts lines.
+
+This is CLASSIFICATION ONLY. Never call tools. Never return tool/action JSON
+(e.g. {"tool": "...", "parameters": {...}}). Never fetch email or take actions.
 
 SAVE (is_useful=true) when the user sets or CHANGES lasting instructions, e.g.:
 - "call me Ali" → add_facts: ["User's name is Ali; address them as Ali"]
@@ -91,8 +106,12 @@ SAVE (is_useful=true) when the user sets or CHANGES lasting instructions, e.g.:
 - "my timezone is Asia/Karachi" → add_facts: ["timezone: Asia/Karachi"]
 - "I work 9am–6pm" → add_facts: ["Working hours: 9:00–18:00 local"]
 
-IGNORE (is_useful=false) for one-off tasks, thanks/ok, secrets, or ephemeral chat.
-Require confidence >= 0.7. Prefer short lines. Do not invent persona/tone fields.`;
+IGNORE (is_useful=false) for one-off tasks (fetch/search emails, drafts, calendar),
+thanks/ok, secrets, or ephemeral chat. Require confidence >= 0.7.
+Prefer short lines. Do not invent persona/tone fields.
+
+Respond with ONLY this json object (no markdown, no other keys):
+{"is_useful":false,"confidence":0,"reason":"one-off task","add_do":null,"add_dont":null,"add_facts":null,"remove":null}`;
 
   const human = `Current memory JSON (as text):
 ${currentMemoryText}
@@ -101,32 +120,9 @@ User message:
 ${userText}`;
 
   try {
-    const structured = createLlm().withStructuredOutput(memoryGateSchema, {
-      method: "jsonMode",
-    });
-    return await structured.invoke([
-      new SystemMessage(system),
-      new HumanMessage(human),
-    ]);
-  } catch (structuredError) {
-    const llm = createLlm();
+    const llm = createLlm({ thinking: false });
     const response = await llm.invoke([
-      new SystemMessage(
-        `${system}
-
-Respond with ONLY JSON:
-{
-  "is_useful": boolean,
-  "confidence": number,
-  "reason": string,
-  "add_do": string[] | null,
-  "add_dont": string[] | null,
-  "add_facts": string[] | null,
-  "remove": string[] | null
-}
-
-Structured-output error: ${errorMessage(structuredError)}`
-      ),
+      new SystemMessage(system),
       new HumanMessage(human),
     ]);
 
@@ -135,7 +131,10 @@ Structured-output error: ${errorMessage(structuredError)}`
         ? response.content
         : JSON.stringify(response.content);
 
-    return memoryGateSchema.parse(extractJsonObject(text));
+    const parsed = memoryGateSchema.safeParse(extractJsonObject(text));
+    return parsed.success ? parsed.data : SKIP_RESULT;
+  } catch {
+    return SKIP_RESULT;
   }
 }
 

@@ -91,7 +91,12 @@ export function extractAttachmentNames(
         : undefined
     );
 
-    if (filename && (hasAttachmentId || !isInlineTextPart(part.mimeType))) {
+    const mimeType =
+      "mimeType" in part && typeof part.mimeType === "string"
+        ? part.mimeType
+        : undefined;
+
+    if (filename && (hasAttachmentId || !isInlineTextPart(mimeType))) {
       const key = filename.toLowerCase();
       if (!seen.has(key)) {
         seen.add(key);
