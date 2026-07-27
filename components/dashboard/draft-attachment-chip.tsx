@@ -84,10 +84,6 @@ export function DraftAttachmentPreviewModal({
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setPreview(null);
-    setIframeFailed(false);
 
     void (async () => {
       try {
@@ -310,6 +306,7 @@ export function DraftAttachmentChips({
       </div>
       {openAttachment ? (
         <DraftAttachmentPreviewModal
+          key={openAttachment.driveFileId}
           attachment={openAttachment}
           onClose={() => setOpenAttachment(null)}
         />

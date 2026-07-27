@@ -25,7 +25,7 @@ type DraftsPanelProps = {
 
 export function DraftsPanel({ enabled }: DraftsPanelProps) {
   const [drafts, setDrafts] = useState<MailMindDraft[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [feedbackById, setFeedbackById] = useState<Record<string, string>>({});
@@ -62,8 +62,41 @@ export function DraftsPanel({ enabled }: DraftsPanelProps) {
 
   useEffect(() => {
     if (!enabled) return;
-    void loadDrafts();
-  }, [enabled, loadDrafts]);
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/agent/drafts/list");
+        const payload = (await response.json()) as {
+          drafts?: MailMindDraft[];
+          error?: string;
+        };
+
+        if (cancelled) return;
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Failed to load drafts");
+        }
+
+        setDrafts(payload.drafts ?? []);
+        setError(null);
+      } catch (loadError) {
+        if (cancelled) return;
+        const message =
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load drafts";
+        setError(message);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
 
   async function submitFeedback(draft: MailMindDraft) {
     const feedback = (feedbackById[draft.id] ?? "").trim();
