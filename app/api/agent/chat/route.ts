@@ -219,7 +219,7 @@ export async function POST(request: Request) {
     });
 
     let reply = result.reply;
-    let proposedDraft: DraftPreview | null = result.proposedDraft ?? null;
+    const proposedDraft: DraftPreview | null = result.proposedDraft ?? null;
 
     if (proposedDraft) {
       reply = buildDraftReviewReply();
