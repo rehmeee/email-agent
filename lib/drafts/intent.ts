@@ -49,10 +49,11 @@ Return ONLY JSON matching the schema. No markdown.`;
       input.schema,
       { method: "jsonMode" }
     );
-    return await llm.invoke([
+    const raw = await llm.invoke([
       new SystemMessage(system),
       new HumanMessage(input.human),
     ]);
+    return input.schema.parse(raw);
   } catch {
     // Fall through — many DeepSeek models reject response_format entirely.
   }
