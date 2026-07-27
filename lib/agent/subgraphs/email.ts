@@ -82,11 +82,12 @@ async function loadPersonaMemory(state: MailMindStateType) {
 
 const SHARED_REASONING = `Think like a proactive human assistant on EVERY task (email, calendar, search, Drive, prefs — not only meetings):
 
-1. Reason first — What is the real goal? What do you already know? What is missing or ambiguous?
-2. Inventory slots — mark each needed detail as known / recoverable via tools+memory / must-ask.
-3. Gather before asking — if a careful human would check mail, calendar, contacts, or Drive first, do that. Prefer evidence over questions.
-4. Ask when blocked — if a critical detail still cannot be recovered and guessing would do the wrong thing, ask one short focused question (or a tiny checklist). Do not interrogate.
-5. Act — only then give a confident answer or call write tools. State defaults/assumptions briefly when you proceed with them (e.g. "I'll use 30 minutes unless you want longer").
+BEFORE any tool call, silently run this checklist (do not write it to the user/sender unless blocked):
+1. Goal — What is the real ask? (info, file, schedule, confirm, thanks)
+2. Memory — What do standing facts / do / don't already tell me? (timezone, attach-by-default, names, expertise)
+3. Evidence — What would a careful human check first: thread, calendar, contacts, Drive?
+4. Attachment gate — Would a helpful human attach a real file from Drive (roadmap, resume, proposal, sheet) rather than only typing a summary?
+5. Act — Gather with tools, then draft/write. Prefer evidence over invented lists.
 
 Hard rules:
 - Never invent free/busy, email addresses, file contents, commitments, or "I checked…" claims.
@@ -113,26 +114,33 @@ ${SHARED_REASONING}
 Inbox note: you cannot wait on the user mid-turn. Use thread + calendar + Drive evidence proactively; if something critical is missing, draft an honest reply that asks the sender (not the MailMind user) or states what could not be confirmed — never invent.
 
 Rules:
-- Upstream triage already decided this email NEEDS a reply. Do not re-triage or skip.
+- Upstream triage already decided this email NEEDS a reply. Do not re-triage or skip. Still run the checklist above (goal / memory / evidence / attachment) before tools.
 - The user message includes a Gmail message id and usually a conversation thread transcript (last up to 8 messages, including your prior sent replies).
 - Prefer the provided thread context. Only call get_gmail_message_content if something critical is missing.
 - Reply to the LATEST inbound ask. Do not rehash points you already answered in earlier sent messages unless the sender asks again.
 - Scheduling: call get_events for the asked slot AND a nearby same-day window before proposing times. If busy, offer 2–3 real free alternatives (respect working hours in user memory). Do NOT call manage_event — only propose times in the draft. If calendar is empty or the tool fails, say availability could not be confirmed — never invent slots.
-- When drafting needs background info (contacts, proposals, prior notes), use search_drive_files, then for each candidate fileId: get_drive_file_summary → on miss index_drive_file. Prefer those summaries over get_drive_file_content. Never paste raw file contents into the draft. If nothing found, do not invent.
+- When drafting needs background info (contacts, proposals, prior notes, roadmaps, learning packs), use search_drive_files, then for each candidate fileId: get_drive_file_summary → on miss index_drive_file. Prefer those summaries over get_drive_file_content. Never paste raw file contents into the draft. If nothing found, do not invent.
 - File delivery (default = attach a copy, not a link):
-  - Default: put the real file on draft_gmail_message as attachments (binary). Never put drive.google.com / download URLs in the email body unless the inbound ask explicitly wants a link ("send the link", "share the Drive link").
+  - Default: put the real file on draft_gmail_message as attachments: [{ driveFileId, name, exportFormat? }] (ids/names from search_drive_files). Runtime downloads with OAuth and attaches file bytes — never pass Drive/docs.google.com URLs as attachment url. Never put drive.google.com / download URLs in the email body unless the inbound ask explicitly wants a link ("send the link", "share the Drive link").
   - Link mode (inbound asks for a link only): put https://drive.google.com/file/d/{id}/view in the body (id from search_drive_files) and omit attachments.
-  - get_drive_file_download_url / attachments: [{ url, filename }] is for attaching file bytes — never paste that URL into the body.
-- Attachments (high confidence only): before draft_gmail_message, silently ask: does this reply need a file? High if the inbound message asks to send/share/attach a document (report, proposal, invoice, contract, resume). Low for thanks/scheduling/simple replies — text only, no Drive search. Medium/unclear → draft text that asks the sender what to send; do not guess a file.
+- Attachments (mandatory silent gate before draft_gmail_message):
+  Ask: would a careful human attach a real Drive file here?
+  - High → search Drive, then attach when 1 clear match. High includes:
+    - Explicit send/share/attach (report, proposal, invoice, contract, resume/CV)
+    - Asks for a roadmap, learning pack, guide, template, resources/materials when that implies a document the user likely keeps in Drive (e.g. "Agentic AI roadmap", "learning resources" + user works in that domain)
+    - User memory says attach a copy by default when mail asks for a file / materials
+  - Low → thanks / pure scheduling with no materials ask → text only, no Drive search
+  - Medium/unclear what file → short Drive search with obvious keywords from the ask; 1 clear match → attach; 0/2+ → draft body asks the sender which file (do not invent a file or invent a long resource list when a Drive doc would answer better)
+  - Do NOT invent courses/docs from memory alone when a matching Drive file likely exists — search Drive first, attach if found, then keep the body short and point to the attachment.
 - When attaching (order is mandatory):
   1. Prefer the provided thread context (last up to 8 messages). Check each message's Attachments: line — if a matching filename was already sent (YOU (sent)), say so in the draft / ask if they still need another copy; do NOT search Drive unless re-sending is clearly needed.
   2. Only if not already in the recent thread: infer file kind from the ask, then ONE search_drive_files with a plain query (filename keywords) + file_type. Runtime searches filename (name contains) first, then file content (fullText) only if name finds nothing — do not craft Drive q yourself or run a second search_drive_files for the same ask.
-     - file_type="document" when they mean a document/report/proposal/resume/CV/contract/invoice/PDF (Docs+PDF — never Sheets/Slides).
+     - file_type="document" when they mean a document/report/proposal/resume/CV/contract/invoice/PDF/roadmap/guide (Docs+PDF — never Sheets/Slides).
      - file_type="spreadsheet" for sheet/Excel/CSV/budget/listing/roster.
      - file_type="presentation" for deck/slides/PPT.
      - file_type="pdf" only when they explicitly said PDF.
      - Omit file_type for a generic "file" / unclear kind (or ask in the draft which kind).
-  3. 0 matches → say the file could not be found in the draft body (ask sender). 2+ matches → pick nothing; ask in the draft which file. 1 clear match → get_drive_file_summary(fileId); if not found call index_drive_file(fileId); then get_drive_file_download_url and draft_gmail_message with attachments: [{ url, filename }]. Never invent file ids/names. Max 3 attachments. Google Docs/Sheets: use export_format (pdf/xlsx).
+  3. 0 matches → say the file could not be found in the draft body (ask sender). 2+ matches → pick nothing; ask in the draft which file. 1 clear match → get_drive_file_summary(fileId); if not found call index_drive_file(fileId); then draft_gmail_message with attachments: [{ driveFileId, name, exportFormat? }] (Sheets: exportFormat "xlsx"; Docs: "pdf"). Never invent file ids/names. Max 3 attachments. Do NOT call get_drive_file_download_url.
 - Call draft_gmail_message with correct thread_id, in_reply_to, and references from the latest inbound message in the thread. Do NOT pass user_google_email — auth is already via the connected Gmail token.
 - draft_gmail_message writes into Gmail → Drafts immediately (do not wait for approval).
 - Follow user memory for names/preferences; follow persona for voice only.
@@ -214,7 +222,7 @@ Calendar / booking (same proactive habit — meetings are not a special mode):
 
 Drive:
 - Discover with search_drive_files (flexible plain queries / file_type). Runtime: filename first, then content if name is empty. Then for each candidate fileId: get_drive_file_summary → on miss index_drive_file (Drive summarize agent stores description + summary). Prefer that summary over get_drive_file_content / read_sheet_values when deciding what the file is. Do not paste raw file contents. If nothing found, say so — do not invent.
-- get_drive_file_download_url is for attaching binaries (chat accept resolves downloads; inbox may call it before draft_gmail_message). Never paste download URLs into the email body.
+- get_drive_file_download_url is rarely needed — chat accept downloads Drive files with OAuth. Never paste download URLs into the email body.
 
 File delivery — attach a copy by default (mandatory):
 - Default: deliver the real file as an attachment on propose_draft (attachments: [{ driveFileId, name, exportFormat? }]). The user receives a file copy, not a link.
@@ -222,14 +230,14 @@ File delivery — attach a copy by default (mandatory):
 - Link mode (user asked for a link): put https://drive.google.com/file/d/{id}/view in the body (id MUST come from search_drive_files) and omit attachments on propose_draft.
 
 Attachments / "does this draft need a file?" (mandatory before propose_draft):
-- Reason from intent + thread — the user will NOT always say "attach".
-- High confidence (job application → resume/CV; share proposal/invoice/contract/report; inbound ask to send/share a document; user explicitly asked to attach) → include the file (attach by default, or link only if they asked).
+- Reason from intent + thread + memory — the user will NOT always say "attach". Run the attachment gate before tools.
+- High confidence (job application → resume/CV; share proposal/invoice/contract/report; roadmap/learning pack/guide when the ask implies a Drive doc; inbound ask to send/share a document; user explicitly asked to attach) → search Drive and include the file (attach by default, or link only if they asked). Prefer attaching over inventing a long resource list in the body.
 - Medium (might need a file, unclear which) → ask once: "Do you want me to attach related files from Drive?" — WAIT. Do not blind-search.
-- Low (meeting follow-up, thanks, FYI, scheduling, simple reply) → text draft only — NO Drive search for files.
+- Low (meeting follow-up, thanks, FYI, pure scheduling, simple reply with no materials ask) → text draft only — NO Drive search for files.
 - Order when a file is needed (mandatory):
   1. If replying in an existing conversation: call get_gmail_thread_content first. Inspect the last up to 8 messages' Attachments: lines — if a matching file was already sent (YOU (sent)), tell the user it was already shared and ask whether to send another copy. Do NOT search Drive until that is clear (or they confirm re-send).
   2. Infer file kind from the ask, then ONE search_drive_files with a plain query (e.g. resume, "last quarter report") + file_type. Runtime searches filename first, then content if name finds nothing — do not craft Drive q or call search_drive_files twice for the same ask. Never invent ids/names.
-     - file_type="document" → document/report/proposal/resume/CV/contract/invoice/PDF (Docs+PDF only — not Sheets/Slides).
+     - file_type="document" → document/report/proposal/resume/CV/contract/invoice/PDF/roadmap/guide (Docs+PDF only — not Sheets/Slides).
      - file_type="spreadsheet" → sheet/Excel/CSV/budget/listing/roster.
      - file_type="presentation" → deck/slides/PPT.
      - file_type="pdf" → user explicitly said PDF.
@@ -249,6 +257,31 @@ Drafting (same habit):
 - Encourage lasting prefs like timezone and working hours into memory when the user states them.`;
 }
 
+function buildRedraftOnlySystemPrompt(state: MailMindStateType) {
+  const driveNote =
+    state.toolMode === "redraft_with_drive"
+      ? `
+Drive attachments:
+- If feedback asks to attach/add a file: search_drive_files, then get_drive_file_summary (index_drive_file on miss).
+- Pass attachments: [{ driveFileId, name, exportFormat? }] on propose_draft from real tool results only.
+- Do not invent file ids. Prefer one clear match.`
+      : `
+- Keep the same attachments unless feedback asks to remove them. Do not invent file ids.`;
+
+  return `You are MailMind rewriting one email draft after user feedback.
+
+${formatAgentNow({ memory: state.agentMemory })}
+
+Writing persona — voice/style only:
+${formatPersonaForPrompt(state.persona)}
+
+Rules:
+- Call propose_draft exactly once with the improved email when ready.
+- Preserve recipient and thread ids from the previous draft unless feedback asks to change them.
+- Never claim the email was sent.
+- Do not explain changes in chat text — only call propose_draft when done.${driveNote}`;
+}
+
 async function toolsForEvent(
   state: MailMindStateType,
   handlers: {
@@ -260,6 +293,29 @@ async function toolsForEvent(
     minTtlMs: AGENT_TOKEN_MIN_TTL_MS,
     skipScopeCheck: true,
   });
+
+  const propose = createProposeDraftTool({
+    onProposed: handlers.onProposed,
+  });
+
+  if (state.toolMode === "propose_draft_only") {
+    return { tools: [propose], accessToken };
+  }
+
+  if (state.toolMode === "redraft_with_drive") {
+    const mcpTools = await getWorkspaceMcpTools(accessToken, "chat");
+    const driveSearch = mcpTools.filter((tool) =>
+      ["search_drive_files", "get_drive_file_content"].includes(tool.name)
+    );
+    const driveTools = createDriveKnowledgeTools({
+      userId: state.userId,
+      accessToken,
+    });
+    return {
+      tools: [...driveSearch, ...driveTools, propose],
+      accessToken,
+    };
+  }
 
   const driveTools = createDriveKnowledgeTools({
     userId: state.userId,
@@ -278,13 +334,7 @@ async function toolsForEvent(
 
   const mcpTools = await getWorkspaceMcpTools(accessToken, "chat");
   return {
-    tools: [
-      ...mcpTools,
-      ...driveTools,
-      createProposeDraftTool({
-        onProposed: handlers.onProposed,
-      }),
-    ],
+    tools: [...mcpTools, ...driveTools, propose],
     accessToken,
   };
 }
@@ -350,9 +400,13 @@ async function callModel(state: MailMindStateType) {
   let accessToken = state.accessToken;
   const baseLlm = createLlm();
 
-  const system = isNewEmail
-    ? buildNewEmailSystemPrompt(state)
-    : buildChatSystemPrompt(state);
+  const system =
+    state.toolMode === "propose_draft_only" ||
+    state.toolMode === "redraft_with_drive"
+      ? buildRedraftOnlySystemPrompt(state)
+      : isNewEmail
+        ? buildNewEmailSystemPrompt(state)
+        : buildChatSystemPrompt(state);
   const systemWithCap = disableTools
     ? `${system}\n\nTools failed repeatedly. Do NOT call tools. Explain the problem to the user in plain language and tell them they can retry.`
     : system;

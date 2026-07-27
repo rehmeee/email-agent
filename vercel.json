@@ -3,6 +3,14 @@
     {
       "path": "/api/gmail/renew-watch",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/drive/renew-watch",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/drive/drain-pending",
+      "schedule": "*/30 * * * *"
     }
   ]
 }

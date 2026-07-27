@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
 import { runMailMindAgent } from "@/lib/agent/graph";
 import { addChatMessage, updateChatMessageMetadata } from "@/lib/chat/threads";
+import { resolveDraftFeedbackIntent } from "@/lib/drafts/intent";
 import {
   buildDraftReviewReply,
+  feedbackNeedsDriveTools,
   formatDraftPreviewBlock,
   type DraftPreview,
 } from "@/lib/drafts/preview";
+import {
+  buildRedraftPrompt,
+  DRAFT_PRAISE_REPLY,
+} from "@/lib/drafts/redraft";
+import type { AgentToolMode } from "@/lib/agent/state";
 import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 import { createClient } from "@/lib/supabase/server";
 
@@ -58,6 +65,77 @@ export async function POST(request: Request) {
 
   try {
     const { accessToken, googleEmail } = await getValidGmailAccessToken(user.id);
+    const intent = await resolveDraftFeedbackIntent(feedback);
+
+    // Praise: learn only — keep draft pending for thumbs-up.
+    if (intent === "praise") {
+      await runMailMindAgent({
+        eventType: "feedback",
+        userId: user.id,
+        accessToken,
+        gmailEmail: googleEmail,
+        reviewDraft: body.draft,
+        feedbackText: feedback,
+        chatThreadId: body.threadId,
+        traceContext: {
+          userId: user.id,
+          chatThreadId: body.threadId ?? undefined,
+          environment: process.env.NODE_ENV ?? "development",
+          tags: ["draft-feedback", "praise"],
+        },
+      });
+
+      const reply = `${DRAFT_PRAISE_REPLY} Thumbs up when you want it saved to Gmail → Drafts.`;
+
+      let assistantMessageId: string | null = null;
+      if (body.threadId) {
+        await addChatMessage(body.threadId, "user", `Draft feedback: ${feedback}`);
+        const assistantMessage = await addChatMessage(
+          body.threadId,
+          "assistant",
+          reply,
+          body.draft
+            ? { draft: body.draft, draftStatus: "pending" }
+            : null
+        );
+        assistantMessageId = assistantMessage.id;
+      }
+
+      return NextResponse.json({
+        reply,
+        draft: body.draft,
+        messageId: assistantMessageId,
+        draftStatus: "pending",
+        intent: "praise",
+        redrafted: false,
+      });
+    }
+
+    if (intent === "other") {
+      const reply =
+        "Got it. Tell me what to change if you want a rewrite, or thumbs up to save this draft to Gmail.";
+      let assistantMessageId: string | null = null;
+      if (body.threadId) {
+        await addChatMessage(body.threadId, "user", `Draft feedback: ${feedback}`);
+        const assistantMessage = await addChatMessage(
+          body.threadId,
+          "assistant",
+          reply,
+          body.draft
+            ? { draft: body.draft, draftStatus: "pending" }
+            : null
+        );
+        assistantMessageId = assistantMessage.id;
+      }
+      return NextResponse.json({
+        reply,
+        draft: body.draft,
+        messageId: assistantMessageId,
+        draftStatus: "pending",
+        intent: "other",
+        redrafted: false,
+      });
+    }
 
     if (body.messageId) {
       await updateChatMessageMetadata(user.id, body.messageId, {
@@ -86,27 +164,24 @@ export async function POST(request: Request) {
     let redraftError: string | null = null;
 
     try {
-      const redraftMessage = `Rewrite an improved email draft using the user's feedback and updated writing persona. Call propose_draft exactly once with the improved email (keep the same recipient and thread ids when possible).
-
-Previous draft:
-To: ${body.draft.to}
-Subject: ${body.draft.subject}
-Body:
-${body.draft.body.slice(0, 2500)}
-
-User feedback:
-${feedback}
-
-Do not explain what you changed. Only call propose_draft.`;
+      const redraftToolMode: AgentToolMode = feedbackNeedsDriveTools(feedback)
+        ? "redraft_with_drive"
+        : "propose_draft_only";
 
       const redraftResult = await runMailMindAgent({
         eventType: "chat",
-        message: redraftMessage,
+        message: buildRedraftPrompt({
+          draft: body.draft,
+          feedback,
+          withDrive: redraftToolMode === "redraft_with_drive",
+        }),
         history: [],
         accessToken,
         gmailEmail: googleEmail,
         userId: user.id,
         chatThreadId: body.threadId,
+        toolMode: redraftToolMode,
+        reviewDraft: body.draft,
         traceContext: {
           userId: user.id,
           chatThreadId: body.threadId ?? undefined,
@@ -150,6 +225,8 @@ Do not explain what you changed. Only call propose_draft.`;
       messageId: assistantMessageId,
       draftStatus: proposedDraft ? "pending" : null,
       redraftError,
+      intent: "revise",
+      redrafted: Boolean(proposedDraft),
     });
   } catch (error) {
     const message = errorMessage(error);

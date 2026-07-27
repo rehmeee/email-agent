@@ -1,12 +1,21 @@
 import { NextResponse } from "next/server";
 import { createGmailDraftViaMcp } from "@/lib/agent/mcp-draft";
 import { runMailMindAgent } from "@/lib/agent/graph";
+import { resolveDraftFeedbackIntent } from "@/lib/drafts/intent";
 import {
   draftPreviewFromRecord,
   getMailMindDraftForUser,
   supersedeMailMindDraft,
 } from "@/lib/drafts/db";
-import type { DraftPreview } from "@/lib/drafts/preview";
+import {
+  feedbackNeedsDriveTools,
+  type DraftPreview,
+} from "@/lib/drafts/preview";
+import {
+  buildRedraftPrompt,
+  DRAFT_PRAISE_REPLY,
+} from "@/lib/drafts/redraft";
+import type { AgentToolMode } from "@/lib/agent/state";
 import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 import { createClient } from "@/lib/supabase/server";
 
@@ -64,6 +73,40 @@ export async function POST(request: Request) {
       throw new Error("Connected Gmail address is required");
     }
 
+    const intent = await resolveDraftFeedbackIntent(feedback);
+
+    // Praise / compliment: teach persona only — do not rewrite or touch Gmail.
+    if (intent === "praise" || intent === "other") {
+      if (intent === "praise") {
+        await runMailMindAgent({
+          eventType: "feedback",
+          userId: user.id,
+          accessToken,
+          gmailEmail: googleEmail,
+          reviewDraft,
+          feedbackText: feedback,
+          traceContext: {
+            userId: user.id,
+            environment: process.env.NODE_ENV ?? "development",
+            tags: ["draft-feedback", "drafts-panel", "praise"],
+          },
+        });
+      }
+
+      return NextResponse.json({
+        reply:
+          intent === "praise"
+            ? DRAFT_PRAISE_REPLY
+            : "Got it. Say what to change if you want a rewrite, or leave the draft as-is.",
+        draft: reviewDraft,
+        gmailDraftId: existing.gmailDraftId,
+        id: existing.id,
+        intent,
+        personaUpdated: intent === "praise",
+        redrafted: false,
+      });
+    }
+
     await runMailMindAgent({
       eventType: "feedback",
       userId: user.id,
@@ -78,26 +121,23 @@ export async function POST(request: Request) {
       },
     });
 
-    const redraftMessage = `Rewrite an improved email draft using the user's feedback and updated writing persona. Call propose_draft exactly once with the improved email (keep the same recipient and thread ids when possible).
-
-Previous draft:
-To: ${reviewDraft.to}
-Subject: ${reviewDraft.subject}
-Body:
-${reviewDraft.body.slice(0, 2500)}
-
-User feedback:
-${feedback}
-
-Do not explain what you changed. Only call propose_draft.`;
+    const redraftToolMode: AgentToolMode = feedbackNeedsDriveTools(feedback)
+      ? "redraft_with_drive"
+      : "propose_draft_only";
 
     const redraftResult = await runMailMindAgent({
       eventType: "chat",
-      message: redraftMessage,
+      message: buildRedraftPrompt({
+        draft: reviewDraft,
+        feedback,
+        withDrive: redraftToolMode === "redraft_with_drive",
+      }),
       history: [],
       accessToken,
       gmailEmail: googleEmail,
       userId: user.id,
+      toolMode: redraftToolMode,
+      reviewDraft,
       traceContext: {
         userId: user.id,
         environment: process.env.NODE_ENV ?? "development",
@@ -149,6 +189,8 @@ Do not explain what you changed. Only call propose_draft.`;
       gmailDraftId: created.draftId,
       id: saved?.id ?? null,
       previousGmailDraftId: existing.gmailDraftId,
+      intent: "revise",
+      redrafted: true,
     });
   } catch (error) {
     const message =

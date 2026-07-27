@@ -3,6 +3,7 @@ import {
   DynamicStructuredTool,
   type StructuredToolInterface,
 } from "@langchain/core/tools";
+import { rewriteDraftAttachmentsArgs } from "@/lib/agent/mcp-attachments";
 import { TOOL_CALL_TIMEOUT_MS } from "@/lib/agent/limits";
 
 /**
@@ -29,9 +30,14 @@ const CHAT_TOOL_ALLOWLIST = [
  * Tools the ambient inbox agent may call. Never `manage_event` (the agent
  * must only propose times in drafts), plus `draft_gmail_message` for
  * creating threaded reply drafts without an approval step.
+ * Omit `get_drive_file_download_url` — under WORKSPACE_MCP_STATELESS_MODE it
+ * has no fetchable URL; inbox attaches via Drive file id → base64 in-app.
  */
 const INBOX_TOOL_ALLOWLIST = [
-  ...CHAT_TOOL_ALLOWLIST.filter((name) => name !== "manage_event"),
+  ...CHAT_TOOL_ALLOWLIST.filter(
+    (name) =>
+      name !== "manage_event" && name !== "get_drive_file_download_url"
+  ),
   "draft_gmail_message",
 ];
 
@@ -308,9 +314,12 @@ async function callMcpToolFunc(
  * Wrap an MCP tool so LLMs may still pass injected args / nulls without
  * failing client-side schema validation; we strip them before the MCP call.
  * search_drive_files: name contains first, then fullText if empty.
+ * draft_gmail_message: resolve Drive attachments to base64 content (never
+ * forward docs.google.com export URLs — MCP URL fetch returns 401).
  */
 function wrapMcpToolForOauth21(
-  tool: StructuredToolInterface
+  tool: StructuredToolInterface,
+  accessToken: string
 ): StructuredToolInterface {
   if (!(tool instanceof DynamicStructuredTool)) {
     return tool;
@@ -321,15 +330,34 @@ function wrapMcpToolForOauth21(
     ? { ...originalSchema, additionalProperties: true }
     : originalSchema;
 
+  const draftDescription =
+    tool.name === "draft_gmail_message"
+      ? `${tool.description}\n\nAttachments: pass [{ driveFileId, name, exportFormat? }] from search_drive_files (Sheets: exportFormat \"xlsx\"). Do NOT pass Drive/docs.google.com URLs — the runtime downloads with OAuth and attaches file bytes.`
+      : tool.description;
+
   return new DynamicStructuredTool({
     name: tool.name,
-    description: tool.description,
+    description: draftDescription,
     schema: looseSchema,
     metadata: tool.metadata,
     func: async (args) => {
-      const sanitized = sanitizeMcpToolArgs(
+      let sanitized = sanitizeMcpToolArgs(
         (args ?? {}) as Record<string, unknown>
       );
+
+      if (tool.name === "draft_gmail_message") {
+        try {
+          sanitized = await rewriteDraftAttachmentsArgs(
+            accessToken,
+            sanitized
+          );
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : String(err);
+          return `Tool error [attach]: ${message}`;
+        }
+        return callMcpToolFunc(tool, sanitized);
+      }
 
       if (tool.name !== "search_drive_files") {
         return callMcpToolFunc(tool, sanitized);
@@ -412,7 +440,7 @@ export async function getWorkspaceMcpTools(
 
   return tools
     .filter((tool) => allowlist.includes(tool.name))
-    .map(wrapMcpToolForOauth21) as StructuredToolInterface[];
+    .map((tool) => wrapMcpToolForOauth21(tool, accessToken)) as StructuredToolInterface[];
 }
 
 export async function invokeMcpTool(

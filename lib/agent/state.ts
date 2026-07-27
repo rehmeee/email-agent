@@ -10,6 +10,12 @@ export type AgentEventType =
   | "feedback"
   | "new_email";
 
+/** When set, email agent binds only propose_draft (redraft-after-feedback). */
+export type AgentToolMode =
+  | "default"
+  | "propose_draft_only"
+  | "redraft_with_drive";
+
 export type SentMailSampleState = {
   id: string;
   subject: string;
@@ -24,6 +30,10 @@ export const MailMindState = Annotation.Root({
   accessToken: Annotation<string>,
   gmailEmail: Annotation<string | null | undefined>,
   chatThreadId: Annotation<string | null | undefined>,
+  toolMode: Annotation<AgentToolMode | null | undefined>({
+    reducer: (_left, right) => right ?? null,
+    default: () => null,
+  }),
   messages: Annotation<BaseMessage[]>({
     reducer: messagesStateReducer,
     default: () => [],

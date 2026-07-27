@@ -127,21 +127,32 @@ export function isDraftAcceptMessage(message: string) {
 
   // Short positive + optional save/create ask
   const acceptSignals =
-    /\b(looks?\s+good|looks?\s+great|looks?\s+perfect|sounds?\s+good|sounds?\s+great|that'?s\s+(fine|good|great|perfect)|thats\s+(fine|good|great|perfect)|this\s+(is\s+)?(fine|good|great|perfect)|mail\s+is\s+(good|great|fine|perfect)|email\s+is\s+(good|great|fine|perfect)|draft\s+is\s+(good|great|fine|perfect)|go\s+ahead|ship\s+it|thumbs?\s*up|lgtm|approve(d)?|create\s+(the\s+)?draft|save\s+(the\s+)?draft|make\s+(the\s+)?draft|create\s+it|save\s+it|send\s+it\s+to\s+drafts?)\b/i;
+    /\b(looks?\s+good|looks?\s+great|looks?\s+perfect|sounds?\s+good|sounds?\s+great|love\s+it|loved\s+it|good\s+job|great\s+job|well\s+done|that'?s\s+(fine|good|great|perfect)|thats\s+(fine|good|great|perfect)|this\s+(is\s+)?(fine|good|great|perfect)|mail\s+is\s+(good|great|fine|perfect)|email\s+is\s+(good|great|fine|perfect)|draft\s+is\s+(good|great|fine|perfect)|go\s+ahead|ship\s+it|thumbs?\s*up|lgtm|approve(d)?|create\s+(the\s+)?draft|save\s+(the\s+)?draft|make\s+(the\s+)?draft|create\s+it|save\s+it|send\s+it\s+to\s+drafts?)\b/i;
 
   if (acceptSignals.test(text)) return true;
 
-  // "ok the mail is good" / "yeah this is fine" without explicit change words
+  // "ok the mail is good" / "yeah this is fine" / "thanks love it" without change words
   if (
-    text.length <= 120 &&
-    new RegExp(`\\b(${APPROVAL_WORDS})\\b`, "i").test(text) &&
-    /\b(mail|email|draft|message|this|that|it)\b/i.test(text) &&
+    text.length <= 160 &&
+    (new RegExp(`\\b(${APPROVAL_WORDS})\\b`, "i").test(text) ||
+      /\b(love\s+it|loved\s+it|thanks|thank\s+you|good\s+job|great\s+job)\b/i.test(
+        text
+      )) &&
+    /\b(mail|email|draft|message|this|that|it|thanks|thank)\b/i.test(text) &&
     !isClearReviseMessage(text)
   ) {
     return true;
   }
 
   return false;
+}
+
+/**
+ * Positive reinforcement / compliment on a draft (learn only — not a rewrite).
+ * Same signals as accept, but without requiring a save-draft ask.
+ */
+export function isDraftPraiseMessage(message: string) {
+  return isDraftAcceptMessage(message);
 }
 
 function hasSaveDraftAsk(text: string) {
@@ -162,8 +173,15 @@ export function isClearReviseMessage(message: string) {
     return false;
   }
 
-  return /\b(change|rewrite|rephrase|shorter|longer|formal|casual|fix|update\s+(the\s+)?(draft|email|mail|body|subject)|don'?t|dont|avoid|instead|remove|add\s+|too\s+(long|short|formal|casual|wordy)|make\s+it\s+(more|less|shorter|longer|friendlier|formal|casual)|can\s+you\s+(make|change|update|rewrite|fix)|please\s+(change|fix|update|rewrite|shorten)|tone\s+down|more\s+polite|less\s+formal)\b/i.test(
+  return /\b(change|rewrite|rephrase|shorter|longer|formal|casual|fix|update\s+(the\s+)?(draft|email|mail|body|subject)|don'?t|dont|avoid|instead|remove|add\s+|attach|attachment|include\s+(the\s+)?(file|doc|pdf|sheet)|from\s+drive|too\s+(long|short|formal|casual|wordy)|make\s+it\s+(more|less|shorter|longer|friendlier|formal|casual)|can\s+you\s+(make|change|update|rewrite|fix|attach|add)|please\s+(change|fix|update|rewrite|shorten|attach|add)|tone\s+down|more\s+polite|less\s+formal)\b/i.test(
     text
+  );
+}
+
+/** Feedback that needs Drive search (attach / swap a file). */
+export function feedbackNeedsDriveTools(message: string) {
+  return /\b(attach|attachment|drive|file|pdf|docx?|xlsx?|sheet|slides?|resume|cv|roadmap|document|include)\b/i.test(
+    message
   );
 }
 
