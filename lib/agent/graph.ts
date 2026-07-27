@@ -126,6 +126,7 @@ Use the thread context above (call get_gmail_message_content only if you need mo
     accessToken: input.accessToken,
     gmailEmail: input.gmailEmail,
     chatThreadId: input.chatThreadId,
+    toolMode: input.toolMode ?? null,
     messages: [
       ...toLangChainMessages(input.history ?? []),
       new HumanMessage(message),

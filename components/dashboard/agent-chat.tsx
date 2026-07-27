@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { DraftAttachmentChips } from "@/components/dashboard/draft-attachment-chip";
 import { MailMindRobot } from "@/components/dashboard/mailmind-robot";
 
 type DraftPreview = {
@@ -95,10 +96,12 @@ function DraftPreviewCard({ draft }: { draft: DraftPreview }) {
           <span className="font-medium text-zinc-300">Subject:</span> {draft.subject}
         </p>
         {draft.attachments?.length ? (
-          <p className="text-zinc-400">
-            <span className="font-medium text-zinc-300">Attachments:</span>{" "}
-            {draft.attachments.map((item) => item.name).join(", ")}
-          </p>
+          <div className="pt-1">
+            <p className="mb-2 text-xs font-medium text-zinc-300">
+              Attachments — click to open and review
+            </p>
+            <DraftAttachmentChips attachments={draft.attachments} />
+          </div>
         ) : null}
       </div>
       <div className="border-t border-white/10 pt-3">

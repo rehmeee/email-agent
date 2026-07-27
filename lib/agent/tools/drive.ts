@@ -1,6 +1,7 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { runDriveSummarizeAgent } from "@/lib/agent/agents/drive-summarize";
+import { clearDriveChangePending } from "@/lib/drive/pending";
 import { getDriveFileSummary } from "@/lib/drive/summaries";
 
 /**
@@ -50,12 +51,16 @@ export function createDriveKnowledgeTools(input: {
 
   const indexDriveFileTool = tool(
     async ({ fileId }) => {
+      const id = fileId.trim();
       const result = await runDriveSummarizeAgent({
         userId: input.userId,
         accessToken: input.accessToken,
-        fileId: fileId.trim(),
+        fileId: id,
         reason: "chat_miss",
       });
+
+      // Avoid an immediate cron re-summarize of the same file.
+      await clearDriveChangePending(input.userId, id);
 
       if (result.deleted) {
         return JSON.stringify({

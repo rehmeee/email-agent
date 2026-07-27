@@ -3,9 +3,12 @@ import { saveMailMindDraft } from "@/lib/drafts/db";
 import { resolvePendingDraftIntent } from "@/lib/drafts/intent";
 import {
   buildDraftReviewReply,
+  feedbackNeedsDriveTools,
   formatDraftPreviewBlock,
   type DraftPreview,
 } from "@/lib/drafts/preview";
+import { buildRedraftPrompt } from "@/lib/drafts/redraft";
+import type { AgentToolMode } from "@/lib/agent/state";
 import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
@@ -136,27 +139,24 @@ export async function POST(request: Request) {
         },
       });
 
-      const redraftMessage = `Rewrite an improved email draft using the user's feedback and updated writing persona. Call propose_draft exactly once with the improved email (keep the same recipient and thread ids when possible).
-
-Previous draft:
-To: ${pendingDraft.to}
-Subject: ${pendingDraft.subject}
-Body:
-${pendingDraft.body.slice(0, 2500)}
-
-User feedback:
-${message}
-
-Do not explain what you changed. Only call propose_draft.`;
+      const redraftToolMode: AgentToolMode = feedbackNeedsDriveTools(message)
+        ? "redraft_with_drive"
+        : "propose_draft_only";
 
       const redraftResult = await runMailMindAgent({
         eventType: "chat",
-        message: redraftMessage,
+        message: buildRedraftPrompt({
+          draft: pendingDraft,
+          feedback: message,
+          withDrive: redraftToolMode === "redraft_with_drive",
+        }),
         history: [],
         accessToken,
         gmailEmail: googleEmail,
         userId: user.id,
         chatThreadId: thread.id,
+        toolMode: redraftToolMode,
+        reviewDraft: pendingDraft,
         traceContext: {
           userId: user.id,
           chatThreadId: thread.id,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { DraftAttachmentChips } from "@/components/dashboard/draft-attachment-chip";
 
 type MailMindDraft = {
   id: string;
@@ -9,7 +10,12 @@ type MailMindDraft = {
   to: string;
   subject: string;
   body: string;
-  attachments?: Array<{ driveFileId: string; name: string }> | null;
+  attachments?: Array<{
+    driveFileId: string;
+    name: string;
+    mimeType?: string;
+    exportFormat?: string;
+  }> | null;
   updatedAt: string;
 };
 
@@ -24,6 +30,8 @@ export function DraftsPanel({ enabled }: DraftsPanelProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [feedbackById, setFeedbackById] = useState<Record<string, string>>({});
   const [actingId, setActingId] = useState<string | null>(null);
+
+  const [statusById, setStatusById] = useState<Record<string, string>>({});
 
   const loadDrafts = useCallback(async () => {
     if (!enabled) return;
@@ -72,9 +80,11 @@ export function DraftsPanel({ enabled }: DraftsPanelProps) {
       });
       const payload = (await response.json()) as {
         error?: string;
+        reply?: string;
         draft?: { to: string; subject: string; body: string };
         gmailDraftId?: string;
         id?: string | null;
+        redrafted?: boolean;
       };
 
       if (!response.ok) {
@@ -82,6 +92,12 @@ export function DraftsPanel({ enabled }: DraftsPanelProps) {
       }
 
       setFeedbackById((current) => ({ ...current, [draft.id]: "" }));
+      if (payload.reply) {
+        setStatusById((current) => ({
+          ...current,
+          [draft.id]: payload.reply!,
+        }));
+      }
       await loadDrafts();
       if (payload.id) {
         setExpandedId(payload.id);
@@ -162,12 +178,6 @@ export function DraftsPanel({ enabled }: DraftsPanelProps) {
                         <p className="mt-1 truncate text-xs text-zinc-500">
                           To: {draft.to}
                         </p>
-                        {draft.attachments?.length ? (
-                          <p className="mt-1 truncate text-xs text-zinc-500">
-                            Attachments:{" "}
-                            {draft.attachments.map((a) => a.name).join(", ")}
-                          </p>
-                        ) : null}
                         {!expanded ? (
                           <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-zinc-400">
                             {draft.body}
@@ -180,14 +190,17 @@ export function DraftsPanel({ enabled }: DraftsPanelProps) {
                     </div>
                   </button>
 
+                  {draft.attachments?.length ? (
+                    <div className="mt-3">
+                      <p className="mb-2 text-[11px] font-medium text-zinc-500">
+                        Attachments — click to open and review
+                      </p>
+                      <DraftAttachmentChips attachments={draft.attachments} />
+                    </div>
+                  ) : null}
+
                   {expanded ? (
                     <div className="mt-4 space-y-3 border-t border-white/[0.06] pt-4">
-                      {draft.attachments?.length ? (
-                        <p className="text-xs text-zinc-400">
-                          Attachments:{" "}
-                          {draft.attachments.map((a) => a.name).join(", ")}
-                        </p>
-                      ) : null}
                       <pre className="whitespace-pre-wrap rounded-lg bg-black/30 p-3 text-sm leading-relaxed text-zinc-300">
                         {draft.body}
                       </pre>
@@ -216,6 +229,11 @@ export function DraftsPanel({ enabled }: DraftsPanelProps) {
                       >
                         {isActing ? "Improving draft..." : "Submit feedback"}
                       </button>
+                      {statusById[draft.id] ? (
+                        <p className="text-xs text-emerald-300/90">
+                          {statusById[draft.id]}
+                        </p>
+                      ) : null}
                       <p className="text-[11px] text-zinc-600">
                         Updated {new Date(draft.updatedAt).toLocaleString()} ·
                         Gmail draft {draft.gmailDraftId}
