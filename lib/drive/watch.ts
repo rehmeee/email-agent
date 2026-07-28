@@ -63,7 +63,8 @@ export async function startDriveChangesWatch(input: {
   const channelToken =
     input.channelToken ??
     (input.userId ? `drive-user:${input.userId}` : `drive-changes:${channelId}`);
-  const expirationMs = Date.now() + 23 * 60 * 60 * 1000;
+  // changes.watch max TTL is ~7 days (files.watch is ~1 day). Google clamps to its limit.
+  const expirationMs = Date.now() + 7 * 24 * 60 * 60 * 1000;
 
   const url = new URL("https://www.googleapis.com/drive/v3/changes/watch");
   url.searchParams.set("pageToken", input.pageToken);
