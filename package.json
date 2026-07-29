@@ -10,7 +10,8 @@
     "mcp:start": "bash scripts/start-mcp.sh",
     "mcp:docker": "docker compose -f docker-compose.mcp.yml --env-file .env up -d --build",
     "mcp:docker:logs": "docker compose -f docker-compose.mcp.yml logs -f workspace-mcp",
-    "mcp:image": "bash scripts/build-mcp-image.sh"
+    "mcp:image": "bash scripts/build-mcp-image.sh",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@langchain/core": "^1.2.1",
@@ -33,6 +34,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
+    "patch-package": "^8.0.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
