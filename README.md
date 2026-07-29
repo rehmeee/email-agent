@@ -18,7 +18,7 @@ npm run dev
 
 ### Environment variables
 
-Copy `.env.example` to `.env` and fill in Supabase + DeepSeek keys.
+Copy `.env.example` to `.env` (or `.env.local`) and fill in every key. See comments in `.env.example` for where each value comes from.
 
 ### Supabase dashboard
 
