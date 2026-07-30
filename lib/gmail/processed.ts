@@ -1,6 +1,10 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export type ProcessedGmailAction = "triaged" | "skipped" | "drafted";
+export type ProcessedGmailAction =
+  | "triaged"
+  | "skipped"
+  | "drafted"
+  | "notified";
 
 function isMissingTableError(message: string) {
   return (

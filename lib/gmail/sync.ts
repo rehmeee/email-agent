@@ -12,8 +12,13 @@ import {
 import { loadThreadContextForReply } from "@/lib/gmail/thread-context";
 import { fetchAndTriageGmailMessage } from "@/lib/gmail/triage";
 import { seedHistoryIdFromProfile } from "@/lib/gmail/watch";
+import { isInboxDraftImportantToSend } from "@/lib/drafts/importance";
 import { saveMailMindDraft } from "@/lib/drafts/db";
+import { scheduleDraftWatch } from "@/lib/drafts/watches";
+import { upsertMeetingWatch } from "@/lib/meetings/watches";
+import { createNotification } from "@/lib/notifications/db";
 import type { DraftPreview } from "@/lib/drafts/preview";
+
 function historyIdTooOldError(error: unknown) {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
@@ -54,19 +59,63 @@ export async function processNewGmailMessage(input: {
     return { skipped: true, reason: "already_processed" as const };
   }
 
-  const { triage } = await fetchAndTriageGmailMessage(
+  const { email, triage } = await fetchAndTriageGmailMessage(
     input.accessToken,
     input.messageId
   );
 
+  if (triage.notifyNow) {
+    try {
+      await createNotification({
+        userId: input.userId,
+        type: "important_email",
+        title: `Important: ${email.subject || "(no subject)"}`,
+        body: `${triage.reason}${email.from ? ` · From ${email.from}` : ""}`,
+        dedupeKey: `important_email:${input.messageId}`,
+        payload: {
+          gmailMessageId: input.messageId,
+          from: email.from,
+          subject: email.subject,
+        },
+      });
+    } catch (notifyError) {
+      console.warn(
+        "[Gmail Sync] Failed to create important_email notify",
+        notifyError
+      );
+    }
+  }
+
+  if (triage.meeting?.start) {
+    try {
+      await upsertMeetingWatch({
+        userId: input.userId,
+        calendarEventId: `gmail:${input.messageId}`,
+        title: triage.meeting.summary || email.subject || "Meeting",
+        startsAt: triage.meeting.start,
+      });
+    } catch (meetingError) {
+      console.warn(
+        "[Gmail Sync] Failed to schedule meeting watch",
+        meetingError
+      );
+    }
+  }
+
   if (triage.decision === "skip") {
-    await markGmailMessageProcessed(input.userId, input.messageId, "skipped");
+    await markGmailMessageProcessed(
+      input.userId,
+      input.messageId,
+      triage.notifyNow || triage.meeting ? "notified" : "skipped"
+    );
     return {
       skipped: true,
       reason: triage.reason,
-      action: "skipped" as const,
+      action: triage.notifyNow ? ("notified" as const) : ("skipped" as const),
       gmailDraftCreated: false,
-      reply: `Skipped: ${triage.reason}`,
+      reply: triage.notifyNow
+        ? `Notified: ${triage.reason}`
+        : `Skipped: ${triage.reason}`,
       triage,
     };
   }
@@ -109,15 +158,36 @@ export async function processNewGmailMessage(input: {
     draftPreview
   ) {
     try {
-      await saveMailMindDraft({
+      const record = await saveMailMindDraft({
         userId: input.userId,
         gmailDraftId: result.gmailDraftId,
         source: "inbox",
         sourceMessageId: input.messageId,
         draft: draftPreview,
       });
+
+      if (record) {
+        const important = await isInboxDraftImportantToSend({
+          to: draftPreview.to,
+          subject: draftPreview.subject,
+          body: draftPreview.body,
+          triageReason: triage.reason,
+        });
+        if (important) {
+          await scheduleDraftWatch({
+            userId: input.userId,
+            mailmindDraftId: record.id,
+            gmailDraftId: record.gmailDraftId,
+            source: "inbox_important",
+            subject: record.subject,
+          });
+        }
+      }
     } catch (persistError) {
-      console.warn("[Gmail Sync] Failed to persist MailMind draft", persistError);
+      console.warn(
+        "[Gmail Sync] Failed to persist MailMind draft",
+        persistError
+      );
     }
   }
 

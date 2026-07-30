@@ -542,6 +542,27 @@ export type GmailDraftSummary = {
   date: string;
 };
 
+/** Returns true if the Gmail draft still exists (unsent). 404 → false. */
+export async function gmailDraftExists(
+  accessToken: string,
+  draftId: string
+): Promise<boolean> {
+  const response = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${encodeURIComponent(draftId)}?format=minimal`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
+  if (response.status === 404) return false;
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as {
+      error?: { message?: string };
+    } | null;
+    throw new Error(payload?.error?.message ?? "Gmail draft lookup failed");
+  }
+  return true;
+}
+
 export async function listGmailDrafts(
   accessToken: string,
   maxResults = 10

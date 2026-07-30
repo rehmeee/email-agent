@@ -1,9 +1,8 @@
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { END, START, StateGraph } from "@langchain/langgraph";
 import { z } from "zod";
 import { createLlm } from "@/lib/agent/llm";
 import { formatAgentNow } from "@/lib/agent/now";
-import { MailMindState, type MailMindStateType } from "@/lib/agent/state";
+import { type MailMindStateType } from "@/lib/agent/state";
 import { getPersonaProfile, updatePersonaProfile } from "@/lib/persona/db";
 import {
   emptyPersonaProfile,
@@ -143,14 +142,14 @@ ${feedback}`;
   return feedbackMergeSchema.parse(extractJsonObject(text));
 }
 
-async function loadPersona(state: MailMindStateType) {
+export async function loadPersona(state: MailMindStateType) {
   const record = await getPersonaProfile(state.userId);
   return {
     persona: normalizePersonaProfile(record?.profile),
   };
 }
 
-async function applyFeedback(state: MailMindStateType) {
+export async function applyFeedback(state: MailMindStateType) {
   const feedback = state.feedbackText?.trim();
   if (!feedback) {
     throw new Error("Feedback text is required");
@@ -232,7 +231,7 @@ async function applyFeedback(state: MailMindStateType) {
   };
 }
 
-async function savePersona(state: MailMindStateType) {
+export async function savePersona(state: MailMindStateType) {
   const profile = normalizePersonaProfile(
     state.persona ?? emptyPersonaProfile()
   );
@@ -242,16 +241,4 @@ async function savePersona(state: MailMindStateType) {
     reply: state.reply || "I’ll keep this in mind for next time.",
     resultMeta: { feedbackSaved: true, personaUpdated: true },
   };
-}
-
-export function createFeedbackSubgraph() {
-  return new StateGraph(MailMindState)
-    .addNode("load_persona", loadPersona)
-    .addNode("apply_feedback", applyFeedback)
-    .addNode("save_persona", savePersona)
-    .addEdge(START, "load_persona")
-    .addEdge("load_persona", "apply_feedback")
-    .addEdge("apply_feedback", "save_persona")
-    .addEdge("save_persona", END)
-    .compile();
 }

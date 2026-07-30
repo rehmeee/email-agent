@@ -4,7 +4,6 @@ import {
   type BaseMessage,
 } from "@langchain/core/messages";
 import type { StructuredToolInterface } from "@langchain/core/tools";
-import { END, START, StateGraph } from "@langchain/langgraph";
 import {
   AGENT_TOKEN_MIN_TTL_MS,
   MAX_CONSECUTIVE_TOOL_ERROR_ROUNDS,
@@ -13,7 +12,7 @@ import { createLlm } from "@/lib/agent/llm";
 import { getWorkspaceMcpTools } from "@/lib/agent/mcp";
 import { parseMcpDraftId } from "@/lib/agent/mcp-draft";
 import { formatAgentNow } from "@/lib/agent/now";
-import { MailMindState, type MailMindStateType } from "@/lib/agent/state";
+import { type MailMindStateType } from "@/lib/agent/state";
 import { createDriveKnowledgeTools } from "@/lib/agent/tools/drive";
 import { createProposeDraftTool } from "@/lib/agent/tools/gmail";
 import {
@@ -24,6 +23,7 @@ import {
 import type { DraftPreview } from "@/lib/drafts/preview";
 import { normalizeDraftAttachments } from "@/lib/drafts/preview";
 import { getValidGmailAccessToken } from "@/lib/gmail/connection";
+import { upsertMeetingWatch } from "@/lib/meetings/watches";
 import { formatMemoryForPrompt } from "@/lib/memory/db";
 import { getAgentMemoryCached } from "@/lib/memory/store";
 import { getPersonaProfile } from "@/lib/persona/db";
@@ -61,7 +61,7 @@ function extractReplyText(messages: BaseMessage[]) {
   return "Done.";
 }
 
-async function loadPersonaMemory(state: MailMindStateType) {
+export async function loadPersonaMemory(state: MailMindStateType) {
   const [personaRecord, memoryLoad] = await Promise.all([
     getPersonaProfile(state.userId),
     state.agentMemory
@@ -359,6 +359,70 @@ function draftCreatedFromToolMessages(messages: BaseMessage[]) {
   return null;
 }
 
+function extractManageEventCreates(
+  aiMessage: BaseMessage | undefined,
+  toolMessages: BaseMessage[]
+): Array<{ eventId: string; title: string; startsAt: string }> {
+  if (
+    !aiMessage ||
+    !("tool_calls" in aiMessage) ||
+    !Array.isArray(aiMessage.tool_calls)
+  ) {
+    return [];
+  }
+
+  const creates: Array<{ eventId: string; title: string; startsAt: string }> =
+    [];
+
+  for (const call of aiMessage.tool_calls) {
+    if (call.name !== "manage_event") continue;
+    const args = (call.args ?? {}) as Record<string, unknown>;
+    const action =
+      typeof args.action === "string" ? args.action.toLowerCase() : "";
+    if (action && action !== "create") continue;
+
+    const start =
+      (typeof args.start_time === "string" && args.start_time) ||
+      (typeof args.start === "string" && args.start) ||
+      "";
+    const title =
+      (typeof args.summary === "string" && args.summary) ||
+      (typeof args.title === "string" && args.title) ||
+      "Meeting";
+    if (!start || !Number.isFinite(Date.parse(start))) continue;
+
+    // Prefer event id from matching tool result content.
+    let eventId = "";
+    for (const message of toolMessages) {
+      const name =
+        "name" in message && typeof message.name === "string"
+          ? message.name
+          : "";
+      if (name !== "manage_event") continue;
+      const content =
+        typeof message.content === "string"
+          ? message.content
+          : JSON.stringify(message.content);
+      if (/error/i.test(content) && !/event/i.test(content)) continue;
+      const idMatch =
+        content.match(/"id"\s*:\s*"([^"]+)"/i) ||
+        content.match(/\bevent[_ ]?id["\s:=]+([A-Za-z0-9_-]+)/i);
+      if (idMatch?.[1]) {
+        eventId = idMatch[1];
+        break;
+      }
+    }
+
+    creates.push({
+      eventId: eventId || `chat:${Date.parse(start)}:${title.slice(0, 40)}`,
+      title,
+      startsAt: new Date(Date.parse(start)).toISOString(),
+    });
+  }
+
+  return creates;
+}
+
 function extractDraftPreviewFromAiToolCall(
   message: BaseMessage | undefined
 ): DraftPreview | null {
@@ -391,7 +455,7 @@ function extractDraftPreviewFromAiToolCall(
   return null;
 }
 
-async function callModel(state: MailMindStateType) {
+export async function callModel(state: MailMindStateType) {
   const isNewEmail = state.eventType === "new_email";
   let reviewDraft = state.reviewDraft ?? null;
   const disableTools =
@@ -433,7 +497,7 @@ async function callModel(state: MailMindStateType) {
   };
 }
 
-async function runTools(state: MailMindStateType) {
+export async function runTools(state: MailMindStateType) {
   const last = state.messages.at(-1);
   if (!last) return {};
 
@@ -459,6 +523,23 @@ async function runTools(state: MailMindStateType) {
       ? draftCreatedFromToolMessages(toolMessages) ?? state.gmailDraftId
       : state.gmailDraftId;
 
+  if (state.eventType === "chat") {
+    const creates = extractManageEventCreates(last, toolMessages);
+    for (const create of creates) {
+      await upsertMeetingWatch({
+        userId: state.userId,
+        calendarEventId: create.eventId,
+        title: create.title,
+        startsAt: create.startsAt,
+      }).catch((error) => {
+        console.warn(
+          "[email agent] Failed to schedule meeting watch from manage_event",
+          error
+        );
+      });
+    }
+  }
+
   return {
     messages: toolMessages,
     accessToken,
@@ -475,7 +556,7 @@ async function runTools(state: MailMindStateType) {
   };
 }
 
-function routeAfterModel(state: MailMindStateType) {
+export function routeAfterModel(state: MailMindStateType) {
   const last = state.messages.at(-1);
   if (last && hasToolCalls(last)) {
     return "run_tools";
@@ -483,7 +564,7 @@ function routeAfterModel(state: MailMindStateType) {
   return "finalize";
 }
 
-async function finalize(state: MailMindStateType) {
+export async function finalize(state: MailMindStateType) {
   if (state.eventType === "new_email") {
     return {
       reply: extractReplyText(state.messages),
@@ -505,20 +586,3 @@ async function finalize(state: MailMindStateType) {
   };
 }
 
-export function createEmailSubgraph() {
-  const graph = new StateGraph(MailMindState)
-    .addNode("load_persona_memory", loadPersonaMemory)
-    .addNode("call_model", callModel)
-    .addNode("run_tools", runTools)
-    .addNode("finalize", finalize)
-    .addEdge(START, "load_persona_memory")
-    .addEdge("load_persona_memory", "call_model")
-    .addConditionalEdges("call_model", routeAfterModel, {
-      run_tools: "run_tools",
-      finalize: "finalize",
-    })
-    .addEdge("run_tools", "call_model")
-    .addEdge("finalize", END);
-
-  return graph.compile();
-}
