@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AgentChat } from "@/components/dashboard/agent-chat";
 import { DraftsPanel } from "@/components/dashboard/drafts-panel";
+import { NotificationsBell } from "@/components/dashboard/notifications-bell";
 
 type DashboardClientProps = {
   user: {
@@ -376,6 +377,7 @@ export function DashboardClient({
             </h1>
           </div>
           <div className="flex items-center gap-3">
+            <NotificationsBell enabled={agentReady} />
             <div className="hidden items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 sm:flex">
               <span
                 className={`h-1.5 w-1.5 rounded-full ${

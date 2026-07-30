@@ -1,5 +1,6 @@
 import { createGmailDraftViaMcp } from "@/lib/agent/mcp-draft";
 import { saveMailMindDraft } from "@/lib/drafts/db";
+import { scheduleDraftWatch } from "@/lib/drafts/watches";
 import { resolvePendingDraftIntent } from "@/lib/drafts/intent";
 import {
   buildDraftReviewReply,
@@ -88,12 +89,24 @@ export async function POST(request: Request) {
         draft: pendingDraft,
       });
 
-      await saveMailMindDraft({
+      const record = await saveMailMindDraft({
         userId: user.id,
         gmailDraftId: created.draftId,
         source: "chat",
         draft: pendingDraft,
       });
+
+      if (record) {
+        await scheduleDraftWatch({
+          userId: user.id,
+          mailmindDraftId: record.id,
+          gmailDraftId: record.gmailDraftId,
+          source: "chat",
+          subject: record.subject,
+        }).catch((watchError) => {
+          console.warn("[agent/chat] Failed to schedule draft watch", watchError);
+        });
+      }
 
       await updateChatMessageMetadata(user.id, pendingMessage!.id, {
         draft: pendingDraft,

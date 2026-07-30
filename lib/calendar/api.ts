@@ -118,6 +118,43 @@ export async function getFreeBusy(
   });
 }
 
+export async function getCalendarEvent(
+  accessToken: string,
+  eventId: string,
+  calendarId = "primary"
+): Promise<CalendarEventSummary | null> {
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
+
+  if (response.status === 404) return null;
+
+  const payload = (await response.json()) as NonNullable<
+    CalendarEventsResponse["items"]
+  >[number] & { error?: { message?: string } };
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? "Calendar event lookup failed");
+  }
+
+  if (payload.status === "cancelled") return null;
+
+  const { start, end, allDay } = eventStartEnd(payload);
+  return {
+    id: payload.id ?? eventId,
+    summary: payload.summary?.trim() || "(No title)",
+    status: payload.status ?? "confirmed",
+    start,
+    end,
+    allDay,
+    location: payload.location ?? null,
+    hangoutLink: payload.hangoutLink ?? null,
+  };
+}
+
 export async function listCalendarEvents(
   accessToken: string,
   timeMin: string,

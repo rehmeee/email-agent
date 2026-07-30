@@ -23,6 +23,7 @@ import {
 import type { DraftPreview } from "@/lib/drafts/preview";
 import { normalizeDraftAttachments } from "@/lib/drafts/preview";
 import { getValidGmailAccessToken } from "@/lib/gmail/connection";
+import { upsertMeetingWatch } from "@/lib/meetings/watches";
 import { formatMemoryForPrompt } from "@/lib/memory/db";
 import { getAgentMemoryCached } from "@/lib/memory/store";
 import { getPersonaProfile } from "@/lib/persona/db";
@@ -358,6 +359,70 @@ function draftCreatedFromToolMessages(messages: BaseMessage[]) {
   return null;
 }
 
+function extractManageEventCreates(
+  aiMessage: BaseMessage | undefined,
+  toolMessages: BaseMessage[]
+): Array<{ eventId: string; title: string; startsAt: string }> {
+  if (
+    !aiMessage ||
+    !("tool_calls" in aiMessage) ||
+    !Array.isArray(aiMessage.tool_calls)
+  ) {
+    return [];
+  }
+
+  const creates: Array<{ eventId: string; title: string; startsAt: string }> =
+    [];
+
+  for (const call of aiMessage.tool_calls) {
+    if (call.name !== "manage_event") continue;
+    const args = (call.args ?? {}) as Record<string, unknown>;
+    const action =
+      typeof args.action === "string" ? args.action.toLowerCase() : "";
+    if (action && action !== "create") continue;
+
+    const start =
+      (typeof args.start_time === "string" && args.start_time) ||
+      (typeof args.start === "string" && args.start) ||
+      "";
+    const title =
+      (typeof args.summary === "string" && args.summary) ||
+      (typeof args.title === "string" && args.title) ||
+      "Meeting";
+    if (!start || !Number.isFinite(Date.parse(start))) continue;
+
+    // Prefer event id from matching tool result content.
+    let eventId = "";
+    for (const message of toolMessages) {
+      const name =
+        "name" in message && typeof message.name === "string"
+          ? message.name
+          : "";
+      if (name !== "manage_event") continue;
+      const content =
+        typeof message.content === "string"
+          ? message.content
+          : JSON.stringify(message.content);
+      if (/error/i.test(content) && !/event/i.test(content)) continue;
+      const idMatch =
+        content.match(/"id"\s*:\s*"([^"]+)"/i) ||
+        content.match(/\bevent[_ ]?id["\s:=]+([A-Za-z0-9_-]+)/i);
+      if (idMatch?.[1]) {
+        eventId = idMatch[1];
+        break;
+      }
+    }
+
+    creates.push({
+      eventId: eventId || `chat:${Date.parse(start)}:${title.slice(0, 40)}`,
+      title,
+      startsAt: new Date(Date.parse(start)).toISOString(),
+    });
+  }
+
+  return creates;
+}
+
 function extractDraftPreviewFromAiToolCall(
   message: BaseMessage | undefined
 ): DraftPreview | null {
@@ -457,6 +522,23 @@ export async function runTools(state: MailMindStateType) {
     state.eventType === "new_email"
       ? draftCreatedFromToolMessages(toolMessages) ?? state.gmailDraftId
       : state.gmailDraftId;
+
+  if (state.eventType === "chat") {
+    const creates = extractManageEventCreates(last, toolMessages);
+    for (const create of creates) {
+      await upsertMeetingWatch({
+        userId: state.userId,
+        calendarEventId: create.eventId,
+        title: create.title,
+        startsAt: create.startsAt,
+      }).catch((error) => {
+        console.warn(
+          "[email agent] Failed to schedule meeting watch from manage_event",
+          error
+        );
+      });
+    }
+  }
 
   return {
     messages: toolMessages,

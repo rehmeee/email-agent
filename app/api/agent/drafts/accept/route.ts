@@ -6,6 +6,7 @@ import {
 } from "@/lib/chat/threads";
 import { saveMailMindDraft } from "@/lib/drafts/db";
 import type { DraftPreview } from "@/lib/drafts/preview";
+import { scheduleDraftWatch } from "@/lib/drafts/watches";
 import { getValidGmailAccessToken } from "@/lib/gmail/connection";
 import { createClient } from "@/lib/supabase/server";
 
@@ -56,12 +57,24 @@ export async function POST(request: Request) {
       draft: body.draft,
     });
 
-    await saveMailMindDraft({
+    const record = await saveMailMindDraft({
       userId: user.id,
       gmailDraftId: created.draftId,
       source: "chat",
       draft: body.draft,
     });
+
+    if (record) {
+      await scheduleDraftWatch({
+        userId: user.id,
+        mailmindDraftId: record.id,
+        gmailDraftId: record.gmailDraftId,
+        source: "chat",
+        subject: record.subject,
+      }).catch((watchError) => {
+        console.warn("[drafts/accept] Failed to schedule draft watch", watchError);
+      });
+    }
 
     if (body.messageId) {
       await updateChatMessageMetadata(user.id, body.messageId, {
